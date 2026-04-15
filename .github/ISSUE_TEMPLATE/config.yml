@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/kaplaukhd/easy-pki/security/advisories/new
+    about: Report security issues privately. Do not open a public issue.
+  - name: Questions and design discussion
+    url: https://github.com/kaplaukhd/easy-pki/discussions
+    about: Use GitHub Discussions for usage questions and design Q&A.
