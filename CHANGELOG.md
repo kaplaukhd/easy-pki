@@ -27,6 +27,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration with HTTP auto-fetch from the certificate's CRL
   Distribution Points, in-memory TTL cache, per-request HTTP timeout and
   optional proxy. Transport uses the JDK's built-in `java.net.http.HttpClient`.
+- `OcspConfig` + `CertValidator.ocsp()` / `CertValidator.ocsp(Consumer<OcspConfig>)`
+  — OCSP revocation checking with nonce support, per-request timeout and
+  optional proxy. The responder URL is taken from each certificate's
+  Authority Information Access extension or overridden explicitly.
+- When both OCSP and CRL are configured, OCSP is consulted first;
+  CRL is used as a fallback on OCSP unavailability.
+- Revocation policy: the subject certificate must be checkable (else
+  `REVOCATION_UNKNOWN`); intermediate certificates silently pass when no
+  revocation data is available, matching common browser behaviour.
 
 ### Added — easy-pki-core
 - Initial project skeleton: Maven multi-module layout, `easy-pki-core` module.

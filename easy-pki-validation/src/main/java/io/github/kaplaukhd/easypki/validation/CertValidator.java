@@ -42,18 +42,20 @@ import io.github.kaplaukhd.easypki.PkiCertInfo;
  * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root).validate();
  * }</pre>
  *
- * <h2>With CRL-based revocation</h2>
+ * <h2>CRL-based revocation</h2>
  * <pre>{@code
- * // Static CRLs (off-line):
- * CertValidator.of(leaf).chain(intermediate, root).crl(fetchedCrl).validate();
- *
- * // HTTP auto-fetch from each cert's CDP extension, with a 30-minute cache:
  * CertValidator.of(leaf)
  *     .chain(intermediate, root)
- *     .crl(c -> c.autoFetch()
- *                .cache(Duration.ofMinutes(30))
- *                .timeout(Duration.ofSeconds(10))
- *                .proxy("http://proxy.corp:3128"))
+ *     .crl(c -> c.autoFetch().cache(Duration.ofMinutes(30)))
+ *     .validate();
+ * }</pre>
+ *
+ * <h2>OCSP-based revocation with CRL fallback</h2>
+ * <pre>{@code
+ * CertValidator.of(leaf)
+ *     .chain(intermediate, root)
+ *     .ocsp(o -> o.timeout(Duration.ofSeconds(5)))
+ *     .crl(c -> c.autoFetch())        // fallback if OCSP is unavailable
  *     .validate();
  * }</pre>
  */
@@ -64,6 +66,8 @@ public final class CertValidator {
     private final Set<X509Certificate> trustAnchors = new HashSet<>();
     private CrlConfig crlConfig;
     private HttpCrlFetcher httpCrlFetcher;
+    private OcspConfig ocspConfig;
+    private OcspClient ocspClient;
     private Instant evaluationTime;
 
     private CertValidator(X509Certificate certificate) {
@@ -108,10 +112,6 @@ public final class CertValidator {
         return this;
     }
 
-    /**
-     * Convenience: enables CRL revocation checking with the given static CRLs.
-     * Equivalent to {@code crl(c -> c.add(crls))}.
-     */
     public CertValidator crl(X509CRL... crls) {
         Objects.requireNonNull(crls, "crls");
         ensureCrlConfig().add(crls);
@@ -124,10 +124,6 @@ public final class CertValidator {
         return this;
     }
 
-    /**
-     * Configures CRL revocation checking. Enable auto-fetch, set cache TTL,
-     * HTTP timeout or proxy via {@link CrlConfig}.
-     */
     public CertValidator crl(Consumer<CrlConfig> configurer) {
         Objects.requireNonNull(configurer, "configurer");
         configurer.accept(ensureCrlConfig());
@@ -139,6 +135,29 @@ public final class CertValidator {
             crlConfig = new CrlConfig();
         }
         return crlConfig;
+    }
+
+    /**
+     * Enables OCSP-based revocation checking with defaults (URL taken from
+     * each cert's AIA extension, 10-second timeout, nonce enabled).
+     */
+    public CertValidator ocsp() {
+        ensureOcspConfig();
+        return this;
+    }
+
+    /** Configures OCSP-based revocation checking. */
+    public CertValidator ocsp(Consumer<OcspConfig> configurer) {
+        Objects.requireNonNull(configurer, "configurer");
+        configurer.accept(ensureOcspConfig());
+        return this;
+    }
+
+    private OcspConfig ensureOcspConfig() {
+        if (ocspConfig == null) {
+            ocspConfig = new OcspConfig();
+        }
+        return ocspConfig;
     }
 
     public ValidationResult validate() {
@@ -205,7 +224,7 @@ public final class CertValidator {
                 .notYetValid(notYetValid)
                 .trusted(trusted);
 
-        if (crlConfig != null) {
+        if (ocspConfig != null || crlConfig != null) {
             checkRevocation(path, errors, now, builder);
         }
 
@@ -222,42 +241,105 @@ public final class CertValidator {
             X509Certificate subject = path.get(i);
             X509Certificate issuer = path.get(i + 1);
 
-            X509CRL applicable = findApplicableCrl(subject, issuer, now, errors);
-            if (applicable == null) {
+            boolean determined = false;
+
+            // --- OCSP (preferred when configured and applicable) ---
+            if (ocspConfig != null) {
+                URI url = resolveOcspUrl(subject, i == 0);
+                if (url != null) {
+                    OcspClient.Outcome outcome = ocspClient().query(url, subject, issuer);
+                    switch (outcome.kind()) {
+                        case GOOD -> determined = true;
+                        case REVOKED -> {
+                            errors.add(new ValidationError(
+                                    ValidationError.Code.REVOKED,
+                                    "Certificate '" + subject(subject) + "' was revoked on "
+                                            + outcome.revokedAt() + " (" + outcome.reason() + ")"));
+                            if (!builder.isRevoked()) {
+                                builder.revoked(outcome.reason(), outcome.revokedAt());
+                            }
+                            determined = true;
+                        }
+                        case UNKNOWN_STATUS -> errors.add(new ValidationError(
+                                ValidationError.Code.REVOCATION_UNKNOWN,
+                                "OCSP responder reports unknown status for '"
+                                        + subject(subject) + "'"));
+                        case UNAVAILABLE -> errors.add(new ValidationError(
+                                ValidationError.Code.OCSP_UNAVAILABLE,
+                                "OCSP check failed for '" + subject(subject) + "': "
+                                        + outcome.detail()));
+                    }
+                }
+            }
+
+            if (determined) {
+                continue;
+            }
+
+            // --- CRL fallback ---
+            if (crlConfig != null) {
+                X509CRL applicable = findApplicableCrl(subject, issuer, now, errors);
+                if (applicable != null) {
+                    X509CRLEntry entry = applicable.getRevokedCertificate(subject);
+                    if (entry == null) {
+                        determined = true;
+                    } else {
+                        RevocationReason reason = extractReason(entry);
+                        Instant revokedAt = entry.getRevocationDate().toInstant();
+                        errors.add(new ValidationError(
+                                ValidationError.Code.REVOKED,
+                                "Certificate '" + subject(subject) + "' was revoked on "
+                                        + revokedAt + " (" + reason + ")"));
+                        if (!builder.isRevoked()) {
+                            builder.revoked(reason, revokedAt);
+                        }
+                        determined = true;
+                    }
+                }
+            }
+
+            // Only the subject (leaf) is required to be checkable. Intermediates
+            // frequently lack per-cert OCSP URLs or dedicated CRLs and are,
+            // in practice, trusted when no revocation data is available —
+            // matching the behaviour of major browsers.
+            if (!determined && i == 0) {
                 errors.add(new ValidationError(
                         ValidationError.Code.REVOCATION_UNKNOWN,
-                        "No valid CRL available for '" + subject(subject) + "'"));
-                continue;
-            }
-
-            X509CRLEntry entry = applicable.getRevokedCertificate(subject);
-            if (entry == null) {
-                continue;
-            }
-
-            RevocationReason reason = extractReason(entry);
-            Instant revokedAt = entry.getRevocationDate().toInstant();
-            errors.add(new ValidationError(
-                    ValidationError.Code.REVOKED,
-                    "Certificate '" + subject(subject) + "' was revoked on "
-                            + revokedAt + " (" + reason + ")"));
-            if (!builder.isRevoked()) {
-                builder.revoked(reason, revokedAt);
+                        "Could not determine revocation status of '" + subject(subject) + "'"));
             }
         }
+    }
+
+    private URI resolveOcspUrl(X509Certificate subject, boolean isSubjectLeaf) {
+        // URL override applies only to the subject (leaf) being validated.
+        // Intermediate certs must use their own AIA OCSP URL (or be skipped).
+        if (isSubjectLeaf && ocspConfig.url() != null) {
+            return ocspConfig.url();
+        }
+        for (String raw : PkiCertInfo.of(subject).getOcspUrls()) {
+            try {
+                URI uri = URI.create(raw);
+                if (uri.getScheme() != null
+                        && (uri.getScheme().equalsIgnoreCase("http")
+                                || uri.getScheme().equalsIgnoreCase("https"))) {
+                    return uri;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // try next
+            }
+        }
+        return null;
     }
 
     private X509CRL findApplicableCrl(X509Certificate subject,
                                       X509Certificate issuer,
                                       Instant now,
                                       List<ValidationError> errors) {
-        // 1) Static CRLs supplied by the user.
         for (X509CRL crl : crlConfig.staticCrls()) {
             if (matchesAndValid(crl, subject, issuer, now, errors)) {
                 return crl;
             }
         }
-        // 2) HTTP auto-fetch from the cert's own CDP URLs, with caching.
         if (crlConfig.isAutoFetch()) {
             for (String rawUrl : PkiCertInfo.of(subject).getCrlUrls()) {
                 URI uri;
@@ -325,6 +407,16 @@ public final class CertValidator {
                     crlConfig.cacheTtl());
         }
         return httpCrlFetcher;
+    }
+
+    private OcspClient ocspClient() {
+        if (ocspClient == null) {
+            ocspClient = new OcspClient(
+                    ocspConfig.timeout(),
+                    ocspConfig.proxy(),
+                    ocspConfig.isNonceEnabled());
+        }
+        return ocspClient;
     }
 
     private static RevocationReason extractReason(X509CRLEntry entry) {
