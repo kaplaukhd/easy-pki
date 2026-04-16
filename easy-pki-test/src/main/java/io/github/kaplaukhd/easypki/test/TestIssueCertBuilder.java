@@ -34,6 +34,7 @@ import io.github.kaplaukhd.easypki.PkiCertificate;
 import io.github.kaplaukhd.easypki.PkiKeys;
 import io.github.kaplaukhd.easypki.SanBuilder;
 import io.github.kaplaukhd.easypki.SignedCertificateBuilder;
+import io.github.kaplaukhd.easypki.validation.RevocationReason;
 
 /**
  * Fluent builder for test leaf certificates. Obtained via
@@ -206,6 +207,24 @@ public final class TestIssueCertBuilder {
     /** Builds and signs the certificate, returning the {@link X509Certificate} only. */
     public X509Certificate build() {
         return issue().certificate();
+    }
+
+    /**
+     * Convenience: builds the certificate and immediately revokes it in the
+     * enclosing {@link TestPki}, returning the (now-revoked) certificate.
+     * Useful for one-liners in tests of revocation handling:
+     *
+     * <pre>{@code
+     * X509Certificate revoked = pki.issueCert()
+     *     .subject("CN=bad")
+     *     .thenRevoke(RevocationReason.KEY_COMPROMISE);
+     * }</pre>
+     */
+    public X509Certificate thenRevoke(RevocationReason reason) {
+        Objects.requireNonNull(reason, "reason");
+        X509Certificate cert = build();
+        pki.revoke(cert, reason);
+        return cert;
     }
 
     /** Builds the certificate and returns it along with the generated key pair. */

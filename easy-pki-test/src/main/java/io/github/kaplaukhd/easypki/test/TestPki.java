@@ -15,11 +15,21 @@
  */
 package io.github.kaplaukhd.easypki.test;
 
+import java.math.BigInteger;
 import java.security.KeyPair;
 import java.security.PrivateKey;
+import java.security.cert.X509CRL;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+
+import io.github.kaplaukhd.easypki.validation.CrlBuilder;
+import io.github.kaplaukhd.easypki.validation.PkiCrl;
+import io.github.kaplaukhd.easypki.validation.RevocationReason;
 
 /**
  * A self-contained, in-memory PKI useful for unit and integration tests.
@@ -46,6 +56,8 @@ public final class TestPki {
     private final X509Certificate rootCa;
     private final KeyPair intermediateKeys;      // nullable — may be absent
     private final X509Certificate intermediateCa; // nullable — may be absent
+
+    private final Map<BigInteger, RevocationEntry> revocations = new LinkedHashMap<>();
 
     TestPki(KeyPair rootKeys,
             X509Certificate rootCa,
@@ -124,4 +136,44 @@ public final class TestPki {
     public List<X509Certificate> getTrustAnchors() {
         return List.of(rootCa);
     }
+
+    // ---------- revocation ----------
+
+    /**
+     * Marks {@code certificate} as revoked with the given reason and
+     * {@code revocationDate = now}. The revocation is reflected in the CRL
+     * returned by {@link #getCrl()}.
+     */
+    public void revoke(X509Certificate certificate, RevocationReason reason) {
+        Objects.requireNonNull(certificate, "certificate");
+        Objects.requireNonNull(reason, "reason");
+        revocations.put(
+                certificate.getSerialNumber(),
+                new RevocationEntry(reason, Instant.now()));
+    }
+
+    /** {@code true} if the given certificate has been revoked in this PKI. */
+    public boolean isRevoked(X509Certificate certificate) {
+        Objects.requireNonNull(certificate, "certificate");
+        return revocations.containsKey(certificate.getSerialNumber());
+    }
+
+    /**
+     * Returns a freshly-built CRL issued by the effective issuer CA, covering
+     * every revocation registered through {@link #revoke(X509Certificate,
+     * RevocationReason)}. Rebuilt on each call so the result always reflects
+     * the current state.
+     */
+    public X509CRL getCrl() {
+        CrlBuilder builder = PkiCrl.issued()
+                .issuer(getIssuerCa(), getIssuerPrivateKey())
+                .nextUpdate(Duration.ofHours(24));
+        for (Map.Entry<BigInteger, RevocationEntry> e : revocations.entrySet()) {
+            RevocationEntry entry = e.getValue();
+            builder.revoke(e.getKey(), entry.reason(), entry.revokedAt());
+        }
+        return builder.build();
+    }
+
+    private record RevocationEntry(RevocationReason reason, Instant revokedAt) {}
 }
