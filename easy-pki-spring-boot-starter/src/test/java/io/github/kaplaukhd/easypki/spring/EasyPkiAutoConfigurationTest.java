@@ -183,6 +183,21 @@ class EasyPkiAutoConfigurationTest {
     }
 
     @Test
+    void healthIndicatorIsRegisteredWhenActuatorOnClasspath() {
+        contextRunner
+                .withPropertyValues(
+                        "easy-pki.trust-store.path=file:" + trustStoreFile.toAbsolutePath(),
+                        "easy-pki.trust-store.password=changeit")
+                .run(ctx -> {
+                    assertThat(ctx).hasBean(
+                            EasyPkiAutoConfiguration.ActuatorConfiguration.HEALTH_BEAN);
+                    EasyPkiHealthIndicator indicator = ctx.getBean(EasyPkiHealthIndicator.class);
+                    assertThat(indicator.health().getStatus())
+                            .isEqualTo(org.springframework.boot.actuate.health.Status.UP);
+                });
+    }
+
+    @Test
     void userCanOverrideValidator() {
         EasyPkiValidator override = new EasyPkiValidator(
                 java.util.List.of(), ValidationMode.NONE,

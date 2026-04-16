@@ -25,11 +25,13 @@ import io.github.kaplaukhd.easypki.Pkcs12Bundle;
 import io.github.kaplaukhd.easypki.PkiPkcs12;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
 
 /**
@@ -116,6 +118,29 @@ public class EasyPkiAutoConfiguration {
         trustStore.ifPresent(b -> monitor.registerBundle(b, TRUST_STORE_BEAN));
         keyStore.ifPresent(b -> monitor.registerBundle(b, KEY_STORE_BEAN));
         return monitor;
+    }
+
+    /**
+     * Registers an Actuator {@code HealthIndicator} exposing the current
+     * status of the easy-pki trust / key stores. Activated only when
+     * Spring Boot Actuator is on the classpath.
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = "org.springframework.boot.actuate.health.HealthIndicator")
+    public static class ActuatorConfiguration {
+
+        /** Qualifier for the auto-registered {@link EasyPkiHealthIndicator} bean. */
+        public static final String HEALTH_BEAN = "easyPkiHealthIndicator";
+
+        @Bean(HEALTH_BEAN)
+        @ConditionalOnMissingBean(name = HEALTH_BEAN)
+        public EasyPkiHealthIndicator easyPkiHealthIndicator(
+                EasyPkiProperties properties,
+                @Qualifier(TRUST_STORE_BEAN) java.util.Optional<Pkcs12Bundle> trustStore,
+                @Qualifier(KEY_STORE_BEAN) java.util.Optional<Pkcs12Bundle> keyStore) {
+            return new EasyPkiHealthIndicator(
+                    trustStore, keyStore, properties.monitoring().warnBefore());
+        }
     }
 
     private static Pkcs12Bundle loadBundle(EasyPkiProperties.Store store, String name) {
