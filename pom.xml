@@ -46,6 +46,7 @@
     <modules>
         <module>easy-pki-core</module>
         <module>easy-pki-validation</module>
+        <module>easy-pki-spring-boot-starter</module>
     </modules>
 
     <properties>
@@ -57,6 +58,7 @@
         <bouncycastle.version>1.78.1</bouncycastle.version>
         <junit.version>5.10.2</junit.version>
         <assertj.version>3.25.3</assertj.version>
+        <spring-boot.version>3.3.5</spring-boot.version>
 
         <!-- Plugin versions -->
         <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
@@ -72,6 +74,14 @@
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-dependencies</artifactId>
+                <version>${spring-boot.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+
             <dependency>
                 <groupId>org.bouncycastle</groupId>
                 <artifactId>bcprov-jdk18on</artifactId>
