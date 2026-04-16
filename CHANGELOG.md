@@ -13,6 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README overhauled to document every module with examples, feature matrix,
   installation snippets and a side-by-side comparison against raw BouncyCastle.
 
+### Added — documentation
+- MkDocs Material documentation site under `docs/` with a home page,
+  getting-started guide, per-module references (core, validation,
+  spring-boot, test), a copy-paste cookbook and a side-by-side
+  migration guide from raw BouncyCastle.
+- `.github/workflows/docs.yml` GitHub Actions workflow that builds the
+  site in strict mode and deploys it to GitHub Pages on every push to
+  `main`.
+
 ### Added — easy-pki-test (0.4.0)
 - New module `easy-pki-test` (consume with `scope=test`).
 - `TestPki.create().withRootCa().withIntermediateCa().build()` spins up

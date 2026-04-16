@@ -55,3 +55,6 @@ pubring.gpg
 # Local tooling / AI assistants — not part of the project
 .claude/
 CLAUDE.md
+
+# MkDocs generated site
+/site/
