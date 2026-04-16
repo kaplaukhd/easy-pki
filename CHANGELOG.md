@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `.github/workflows/docs.yml` GitHub Actions workflow that builds the
   site in strict mode and deploys it to GitHub Pages on every push to
   `main`.
+- `RELEASING.md` — maintainer-only guide covering Sonatype Central
+  Portal setup, GPG-signing configuration, dry-run validation and the
+  step-by-step release + tag + post-release SNAPSHOT-bump workflow.
 
 ### Added — easy-pki-test (0.4.0)
 - New module `easy-pki-test` (consume with `scope=test`).
