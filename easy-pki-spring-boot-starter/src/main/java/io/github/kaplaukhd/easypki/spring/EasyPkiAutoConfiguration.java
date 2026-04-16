@@ -28,6 +28,7 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.Resource;
 
@@ -92,6 +93,29 @@ public class EasyPkiAutoConfiguration {
                 v.crlCacheTtl(),
                 v.httpTimeout(),
                 v.proxy());
+    }
+
+    /**
+     * Periodic certificate-expiry monitor. Created only when
+     * {@code easy-pki.monitoring.enabled=true}. The trust-store and key-store
+     * chains (when present) are auto-registered for monitoring.
+     */
+    @Bean
+    @ConditionalOnMissingBean
+    @ConditionalOnProperty(
+            prefix = "easy-pki.monitoring", name = "enabled", havingValue = "true")
+    public CertificateMonitor easyPkiCertificateMonitor(
+            EasyPkiProperties properties,
+            ApplicationEventPublisher publisher,
+            @Qualifier(TRUST_STORE_BEAN) java.util.Optional<Pkcs12Bundle> trustStore,
+            @Qualifier(KEY_STORE_BEAN) java.util.Optional<Pkcs12Bundle> keyStore) {
+
+        EasyPkiProperties.Monitoring m = properties.monitoring();
+        CertificateMonitor monitor = new CertificateMonitor(
+                publisher, m.checkInterval(), m.warnBefore());
+        trustStore.ifPresent(b -> monitor.registerBundle(b, TRUST_STORE_BEAN));
+        keyStore.ifPresent(b -> monitor.registerBundle(b, KEY_STORE_BEAN));
+        return monitor;
     }
 
     private static Pkcs12Bundle loadBundle(EasyPkiProperties.Store store, String name) {

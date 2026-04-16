@@ -158,6 +158,31 @@ class EasyPkiAutoConfigurationTest {
     }
 
     @Test
+    void monitorBeanAbsentByDefault() {
+        contextRunner.run(ctx ->
+                assertThat(ctx).doesNotHaveBean(CertificateMonitor.class));
+    }
+
+    @Test
+    void monitorBeanCreatedWhenEnabledAndRegistersTrustStore() {
+        contextRunner
+                .withPropertyValues(
+                        "easy-pki.monitoring.enabled=true",
+                        "easy-pki.monitoring.check-interval=12h",
+                        "easy-pki.monitoring.warn-before=30d",
+                        "easy-pki.trust-store.path=file:" + trustStoreFile.toAbsolutePath(),
+                        "easy-pki.trust-store.password=changeit")
+                .run(ctx -> {
+                    assertThat(ctx).hasSingleBean(CertificateMonitor.class);
+                    CertificateMonitor monitor = ctx.getBean(CertificateMonitor.class);
+                    // The root from the trust store should be registered.
+                    assertThat(monitor.monitored())
+                            .extracting(X509Certificate::getEncoded)
+                            .contains(root.getEncoded());
+                });
+    }
+
+    @Test
     void userCanOverrideValidator() {
         EasyPkiValidator override = new EasyPkiValidator(
                 java.util.List.of(), ValidationMode.NONE,
