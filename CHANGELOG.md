@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+### Added — easy-pki-validation (0.2.0 in progress)
+- New module `easy-pki-validation` depending on `easy-pki-core`.
+- `CertValidator` — fluent chain validator: `CertValidator.of(cert).chain(...).trustAnchors(...).at(instant).validate()`.
+- `ValidationResult` — immutable result with `isValid / isExpired / isNotYetValid / isTrusted / isRevoked / getRevokeReason / getRevokeTime / getValidationPath / getErrors`.
+- `ValidationError` record with a code enum (`EXPIRED`, `NOT_YET_VALID`, `ISSUER_MISMATCH`, `BROKEN_SIGNATURE`, `NOT_A_CA`, `UNTRUSTED_ROOT`, `INCOMPLETE_CHAIN`, `REVOKED`, `REVOCATION_UNKNOWN`, `OCSP_UNAVAILABLE`, `CRL_UNAVAILABLE`).
+- `RevocationReason` enum with RFC 5280 §5.3.1 CRLReason codes and round-trip `fromCode(int)`.
+
+### Added — easy-pki-core
 - Initial project skeleton: Maven multi-module layout, `easy-pki-core` module.
 - Apache License 2.0, NOTICE, CODE_OF_CONDUCT, SECURITY, CONTRIBUTING.
 - GitHub Actions CI pipeline (build + test on Java 17 and 21).
