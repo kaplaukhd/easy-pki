@@ -13,6 +13,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ValidationResult` — immutable result with `isValid / isExpired / isNotYetValid / isTrusted / isRevoked / getRevokeReason / getRevokeTime / getValidationPath / getErrors`.
 - `ValidationError` record with a code enum (`EXPIRED`, `NOT_YET_VALID`, `ISSUER_MISMATCH`, `BROKEN_SIGNATURE`, `NOT_A_CA`, `UNTRUSTED_ROOT`, `INCOMPLETE_CHAIN`, `REVOKED`, `REVOCATION_UNKNOWN`, `OCSP_UNAVAILABLE`, `CRL_UNAVAILABLE`).
 - `RevocationReason` enum with RFC 5280 §5.3.1 CRLReason codes and round-trip `fromCode(int)`.
+- `PkiCrl.issued()` + `CrlBuilder` — fluent CRL issuance with automatic
+  AuthorityKeyIdentifier and CRLNumber, RSA/EC signing, and per-entry reason
+  codes. `revoke(X509Certificate, RevocationReason)` and
+  `revoke(BigInteger, RevocationReason, Instant)` overloads.
+- `PkiCrls` — PEM and DER I/O for X.509 CRLs, file auto-detect.
+- `CertValidator.crl(X509CRL...)` — opt-in CRL-based revocation checking.
+  For each non-anchor cert in the path the validator finds a matching CRL
+  by issuer DN, verifies the CRL's signature against the issuer's public
+  key, enforces `thisUpdate`/`nextUpdate` freshness, and reports
+  `REVOKED`, `REVOCATION_UNKNOWN`, or `CRL_UNAVAILABLE` accordingly.
 
 ### Added — easy-pki-core
 - Initial project skeleton: Maven multi-module layout, `easy-pki-core` module.
