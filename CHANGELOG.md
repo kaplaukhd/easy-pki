@@ -7,7 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — easy-pki-validation (0.2.0 in progress)
+### Added — easy-pki-spring-boot-starter (0.3.0 in progress)
+- New module `easy-pki-spring-boot-starter` targeting Spring Boot 3.3.x
+  (Java 17+).
+- `EasyPkiProperties` — `@ConfigurationProperties("easy-pki")` binding for
+  trust store / key store / validation / monitoring, using Spring Boot's
+  `Resource` abstraction and `Duration` parsing (`30m`, `12h`, `30d`).
+- `ValidationMode` enum — `NONE`, `OCSP`, `CRL`, `OCSP_WITH_CRL_FALLBACK`.
+- `EasyPkiAutoConfiguration` — registered via the Spring Boot 3
+  `AutoConfiguration.imports` file; conditionally loads PKCS#12 trust and
+  key stores into `Pkcs12Bundle` beans qualified `easyPkiTrustStore` /
+  `easyPkiKeyStore`, and exposes a pre-configured `EasyPkiValidator`.
+- `EasyPkiValidator` — thread-safe facade that wraps the fluent
+  `CertValidator` with the configured trust anchors and revocation mode;
+  offers `validate(cert[, chain...])` one-liners and `newValidator(cert)`
+  for advanced per-call tuning.
+
+### Added — easy-pki-validation (0.2.0)
 - New module `easy-pki-validation` depending on `easy-pki-core`.
 - `CertValidator` — fluent chain validator: `CertValidator.of(cert).chain(...).trustAnchors(...).at(instant).validate()`.
 - `ValidationResult` — immutable result with `isValid / isExpired / isNotYetValid / isTrusted / isRevoked / getRevokeReason / getRevokeTime / getValidationPath / getErrors`.
