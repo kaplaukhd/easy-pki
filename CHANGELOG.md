@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and CA-flag support for sub-CA tests. `build()` returns just the
   certificate; `issue()` returns an `IssuedCert` record with both cert
   and the generated key pair.
+- `TestPki.revoke(cert, reason)` + `TestPki.getCrl()` — internal
+  revocation registry plus on-demand CRL issued by the effective CA
+  signer. `TestPki.isRevoked(cert)` exposes the registry for assertions.
+- `TestIssueCertBuilder.thenRevoke(reason)` — one-liner that issues a
+  leaf certificate and immediately registers it as revoked.
 
 ### Added — easy-pki-spring-boot-starter (0.3.0)
 - New module `easy-pki-spring-boot-starter` targeting Spring Boot 3.3.x
