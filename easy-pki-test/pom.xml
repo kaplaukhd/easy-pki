@@ -38,6 +38,13 @@
             <artifactId>bcpkix-jdk18on</artifactId>
         </dependency>
 
+        <!-- The extension lives in main/ (consumers use it from their tests),
+             so the JUnit Jupiter API is a compile-scope dependency. Downstream
+             consumers already include JUnit in their test classpath. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
