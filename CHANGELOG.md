@@ -22,6 +22,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CertValidator` with the configured trust anchors and revocation mode;
   offers `validate(cert[, chain...])` one-liners and `newValidator(cert)`
   for advanced per-call tuning.
+- `CertificateMonitor` — periodic expiry scanner running on its own
+  daemon `ScheduledExecutorService`, with `register` / `registerBundle`
+  helpers, safe at-most-once event dispatch per state, and graceful
+  recovery from failing listeners. Auto-registers the trust-store and
+  key-store chains when those bundles are configured.
+- `CertExpiringEvent` / `CertExpiredEvent` — Spring `ApplicationEvent`s
+  published by the monitor; consumed via `@EventListener`.
+- Monitor is auto-wired only when
+  `easy-pki.monitoring.enabled=true`; the host application does not need
+  `@EnableScheduling`.
 
 ### Added — easy-pki-validation (0.2.0)
 - New module `easy-pki-validation` depending on `easy-pki-core`.
