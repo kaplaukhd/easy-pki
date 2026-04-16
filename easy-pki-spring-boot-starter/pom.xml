@@ -42,6 +42,15 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Jackson annotations are referenced by Actuator's Health class.
+             Pulled in as optional so javac can resolve them at compile time
+             (avoids "unknown enum constant" warnings under -Werror) without
+             being forced on downstream consumers. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <optional>true</optional>
+        </dependency>
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-web</artifactId>
