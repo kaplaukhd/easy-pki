@@ -45,6 +45,7 @@
 
     <modules>
         <module>easy-pki-core</module>
+        <module>easy-pki-validation</module>
     </modules>
 
     <properties>
