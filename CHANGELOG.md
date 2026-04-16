@@ -36,6 +36,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Revocation policy: the subject certificate must be checkable (else
   `REVOCATION_UNKNOWN`); intermediate certificates silently pass when no
   revocation data is available, matching common browser behaviour.
+- `ChainBuilder.of(cert).intermediates(pool).trustAnchors(...).build()` —
+  automatic trust-path construction. Walks upward from the leaf, choosing
+  candidates whose subject DN matches and whose public key verifies the
+  current certificate. Accepts a JCA `KeyStore` via `.trustStore(ks)`.
+  Returns a `CertChain` with `getLeaf()` / `getRoot()` / `getCertificates()`
+  / `validate()` / `toValidator()`.
+- `CertValidator.ocspWithCrlFallback()` — one-line convenience that
+  enables OCSP with auto-fetched CRL fallback; equivalent to
+  `.ocsp().crl(c -> c.autoFetch())` and further tunable via
+  `.ocsp(...)` and `.crl(...)`.
 
 ### Added — easy-pki-core
 - Initial project skeleton: Maven multi-module layout, `easy-pki-core` module.
