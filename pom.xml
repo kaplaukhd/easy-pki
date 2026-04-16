@@ -47,6 +47,7 @@
         <module>easy-pki-core</module>
         <module>easy-pki-validation</module>
         <module>easy-pki-spring-boot-starter</module>
+        <module>easy-pki-test</module>
     </modules>
 
     <properties>

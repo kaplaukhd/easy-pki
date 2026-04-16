@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — easy-pki-spring-boot-starter (0.3.0 in progress)
+### Added — easy-pki-test (0.4.0 in progress)
+- New module `easy-pki-test` (consume with `scope=test`).
+- `TestPki.create().withRootCa().withIntermediateCa().build()` spins up
+  a self-contained in-memory PKI hierarchy with sensible defaults
+  (RSA 2048 / 10-year root / 5-year intermediate / proper CA usages).
+- `TestPki.issueCert()` fluent leaf issuance: subject (string or
+  `DnBuilder`), SAN with auto-detect DNS / IP / email / IPv6,
+  `KeyUsage`, `ExtendedKeyUsage`, validity window, `expired()` and
+  `notYetValid()` shortcuts, `rsa(int)` / `ec(Curve)` key-type helpers,
+  and CA-flag support for sub-CA tests. `build()` returns just the
+  certificate; `issue()` returns an `IssuedCert` record with both cert
+  and the generated key pair.
+
+### Added — easy-pki-spring-boot-starter (0.3.0)
 - New module `easy-pki-spring-boot-starter` targeting Spring Boot 3.3.x
   (Java 17+).
 - `EasyPkiProperties` — `@ConfigurationProperties("easy-pki")` binding for
