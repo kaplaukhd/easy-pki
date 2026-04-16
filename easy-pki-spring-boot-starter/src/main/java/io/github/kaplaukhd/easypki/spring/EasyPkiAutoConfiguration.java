@@ -143,6 +143,30 @@ public class EasyPkiAutoConfiguration {
         }
     }
 
+    /**
+     * Registers the {@link EasyPkiClientCertFilter} when the Servlet API and
+     * Spring Security are on the classpath. The filter is NOT automatically
+     * added to the security filter chain — applications opt in by wiring it
+     * into their {@code SecurityFilterChain} (typically before
+     * {@code X509AuthenticationFilter}).
+     */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(name = {
+            "jakarta.servlet.Filter",
+            "org.springframework.web.filter.OncePerRequestFilter"
+    })
+    public static class SecurityConfiguration {
+
+        /** Qualifier for the auto-registered {@link EasyPkiClientCertFilter} bean. */
+        public static final String FILTER_BEAN = "easyPkiClientCertFilter";
+
+        @Bean(FILTER_BEAN)
+        @ConditionalOnMissingBean(EasyPkiClientCertFilter.class)
+        public EasyPkiClientCertFilter easyPkiClientCertFilter(EasyPkiValidator validator) {
+            return new EasyPkiClientCertFilter(validator, false);
+        }
+    }
+
     private static Pkcs12Bundle loadBundle(EasyPkiProperties.Store store, String name) {
         if (store == null) {
             throw new IllegalStateException(

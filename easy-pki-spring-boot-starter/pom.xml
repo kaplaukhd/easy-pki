@@ -56,6 +56,20 @@
             <artifactId>spring-security-web</artifactId>
             <optional>true</optional>
         </dependency>
+        <!-- Spring Web supplies OncePerRequestFilter; Servlet API is needed for
+             the compile-time signatures of our client-cert filter. Both are
+             optional so downstream consumers without a Servlet stack are
+             unaffected. -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <optional>true</optional>
+        </dependency>
 
         <dependency>
             <groupId>org.springframework.boot</groupId>
