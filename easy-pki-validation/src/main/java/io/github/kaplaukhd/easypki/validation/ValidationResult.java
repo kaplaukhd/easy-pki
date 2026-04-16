@@ -145,6 +145,10 @@ public final class ValidationResult {
             return this;
         }
 
+        boolean isRevoked() {
+            return revoked;
+        }
+
         Builder validationPath(List<X509Certificate> path) {
             this.validationPath = Objects.requireNonNull(path, "path");
             return this;
