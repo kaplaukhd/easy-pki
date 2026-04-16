@@ -66,6 +66,8 @@ public final class TestIssueCertBuilder {
 
     private final Set<KeyUsage> keyUsages = EnumSet.noneOf(KeyUsage.class);
     private final Set<ExtendedKeyUsage> extendedKeyUsages = EnumSet.noneOf(ExtendedKeyUsage.class);
+    private final List<String> ocspUrls = new ArrayList<>();
+    private final List<String> crlDistributionPoints = new ArrayList<>();
 
     private Duration validFor = Duration.ofDays(30);
     private Instant validFrom;
@@ -151,6 +153,21 @@ public final class TestIssueCertBuilder {
         for (ExtendedKeyUsage p : purposes) {
             extendedKeyUsages.add(Objects.requireNonNull(p, "purpose"));
         }
+        return this;
+    }
+
+    /**
+     * Adds an AIA OCSP responder URL to the certificate. Typically wired to
+     * {@link TestOcspResponder#getUrl()}.
+     */
+    public TestIssueCertBuilder ocsp(String url) {
+        this.ocspUrls.add(Objects.requireNonNull(url, "url"));
+        return this;
+    }
+
+    /** Adds a CRL Distribution Point URL. */
+    public TestIssueCertBuilder crlDistributionPoint(String url) {
+        this.crlDistributionPoints.add(Objects.requireNonNull(url, "url"));
         return this;
     }
 
@@ -278,6 +295,13 @@ public final class TestIssueCertBuilder {
             b.pathLength(pathLength);
         } else if (isCa) {
             b.isCA(true);
+        }
+
+        for (String url : ocspUrls) {
+            b.ocsp(url);
+        }
+        for (String url : crlDistributionPoints) {
+            b.crlDistributionPoint(url);
         }
 
         return new IssuedCert(b.build(), leafKeys);
