@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   convenience passthroughs so test leaves can embed the responder URL
   in their AIA / CDP extensions without dropping to the core
   `PkiCertificate.signed()` API.
+- `@InjectTestPki` annotation and `EasyPkiExtension` JUnit 5 extension
+  — injects a fresh `TestPki` into fields and test-method parameters
+  per test method. Configurable via `withIntermediate`, `rootSubject`
+  and `intermediateSubject` annotation attributes. Works on nested
+  test classes and through the class hierarchy.
 
 ### Added — easy-pki-spring-boot-starter (0.3.0)
 - New module `easy-pki-spring-boot-starter` targeting Spring Boot 3.3.x
