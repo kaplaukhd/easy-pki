@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signer. `TestPki.isRevoked(cert)` exposes the registry for assertions.
 - `TestIssueCertBuilder.thenRevoke(reason)` — one-liner that issues a
   leaf certificate and immediately registers it as revoked.
+- `TestOcspResponder` — loopback in-memory OCSP server backed by
+  `TestPki`. Reports GOOD for unrevoked serials and REVOKED (with
+  reason and time) for registered revocations. Nonce extensions are
+  echoed back. Bound to `127.0.0.1` on a random port; close with
+  try-with-resources. Started via `TestPki.startOcspResponder()`.
+- `TestIssueCertBuilder.ocsp(url)` / `.crlDistributionPoint(url)` —
+  convenience passthroughs so test leaves can embed the responder URL
+  in their AIA / CDP extensions without dropping to the core
+  `PkiCertificate.signed()` API.
 
 ### Added — easy-pki-spring-boot-starter (0.3.0)
 - New module `easy-pki-spring-boot-starter` targeting Spring Boot 3.3.x
