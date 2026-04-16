@@ -37,6 +37,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   key stores. Certificates expiring within the configured warn window are
   flagged in the details. Auto-registered as the `easyPkiHealthIndicator`
   bean only when Spring Boot Actuator is on the classpath.
+- `EasyPkiClientCertFilter` — `OncePerRequestFilter` that extracts the
+  client certificate chain from the standard
+  `jakarta.servlet.request.X509Certificate` request attribute, validates
+  it through `EasyPkiValidator`, attaches the `ValidationResult` under
+  `easyPki.validationResult`, and rejects failing requests with
+  `401 Unauthorized`. Supports an optional mode that passes through
+  requests without a client certificate. Auto-registered when the
+  Servlet API and Spring Web are on the classpath; applications opt in
+  by adding the bean to their `SecurityFilterChain` before
+  `X509AuthenticationFilter`.
 
 ### Added — easy-pki-validation (0.2.0)
 - New module `easy-pki-validation` depending on `easy-pki-core`.

@@ -198,6 +198,17 @@ class EasyPkiAutoConfigurationTest {
     }
 
     @Test
+    void clientCertFilterIsRegisteredWhenSpringWebOnClasspath() {
+        contextRunner
+                .withPropertyValues(
+                        "easy-pki.trust-store.path=file:" + trustStoreFile.toAbsolutePath(),
+                        "easy-pki.trust-store.password=changeit")
+                .run(ctx -> {
+                    assertThat(ctx).hasSingleBean(EasyPkiClientCertFilter.class);
+                });
+    }
+
+    @Test
     void userCanOverrideValidator() {
         EasyPkiValidator override = new EasyPkiValidator(
                 java.util.List.of(), ValidationMode.NONE,
