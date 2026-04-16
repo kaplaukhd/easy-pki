@@ -15,6 +15,7 @@
  */
 package io.github.kaplaukhd.easypki.validation;
 
+import java.net.URI;
 import java.security.GeneralSecurityException;
 import java.security.cert.X509CRL;
 import java.security.cert.X509CRLEntry;
@@ -27,23 +28,33 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Consumer;
+
+import io.github.kaplaukhd.easypki.PkiCertInfo;
 
 /**
  * Fluent certificate validator.
  *
- * <p>Validates a certificate against a provided chain. The chain must
- * terminate either in a self-signed root or in one of the configured
- * {@linkplain #trustAnchors(X509Certificate...) trust anchors}.
- *
- * <h2>Chain-only validation</h2>
+ * <h2>Simple chain check</h2>
  * <pre>{@code
  * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root).validate();
  * }</pre>
  *
  * <h2>With CRL-based revocation</h2>
  * <pre>{@code
+ * // Static CRLs (off-line):
  * CertValidator.of(leaf).chain(intermediate, root).crl(fetchedCrl).validate();
+ *
+ * // HTTP auto-fetch from each cert's CDP extension, with a 30-minute cache:
+ * CertValidator.of(leaf)
+ *     .chain(intermediate, root)
+ *     .crl(c -> c.autoFetch()
+ *                .cache(Duration.ofMinutes(30))
+ *                .timeout(Duration.ofSeconds(10))
+ *                .proxy("http://proxy.corp:3128"))
+ *     .validate();
  * }</pre>
  */
 public final class CertValidator {
@@ -51,25 +62,19 @@ public final class CertValidator {
     private final X509Certificate certificate;
     private final List<X509Certificate> chain = new ArrayList<>();
     private final Set<X509Certificate> trustAnchors = new HashSet<>();
-    private final List<X509CRL> crls = new ArrayList<>();
-    private boolean crlCheckEnabled;
+    private CrlConfig crlConfig;
+    private HttpCrlFetcher httpCrlFetcher;
     private Instant evaluationTime;
 
     private CertValidator(X509Certificate certificate) {
         this.certificate = certificate;
     }
 
-    /** Starts validation of the given certificate. */
     public static CertValidator of(X509Certificate certificate) {
         Objects.requireNonNull(certificate, "certificate");
         return new CertValidator(certificate);
     }
 
-    /**
-     * Supplies the chain of intermediates and (optionally) the root.
-     * If the root is included and is self-signed, it becomes an implicit
-     * trust anchor. Multiple calls accumulate.
-     */
     public CertValidator chain(X509Certificate... chain) {
         Objects.requireNonNull(chain, "chain");
         for (X509Certificate c : chain) {
@@ -78,7 +83,6 @@ public final class CertValidator {
         return this;
     }
 
-    /** Overload that accepts a {@link List}. */
     public CertValidator chain(List<X509Certificate> chain) {
         Objects.requireNonNull(chain, "chain");
         for (X509Certificate c : chain) {
@@ -87,63 +91,56 @@ public final class CertValidator {
         return this;
     }
 
-    /**
-     * Registers explicit trust anchors. If the chain does not terminate in a
-     * self-signed root, the last certificate's issuer must be one of the
-     * configured anchors and its signature must verify against that anchor.
-     */
     public CertValidator trustAnchors(X509Certificate... anchors) {
         Objects.requireNonNull(anchors, "anchors");
         this.trustAnchors.addAll(Arrays.asList(anchors));
         return this;
     }
 
-    /** Overload that accepts a collection. */
     public CertValidator trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
         this.trustAnchors.addAll(anchors);
         return this;
     }
 
-    /**
-     * Sets the instant at which validity is evaluated. Default is now.
-     * Useful for historical or future-dated checks.
-     */
     public CertValidator at(Instant evaluationTime) {
         this.evaluationTime = Objects.requireNonNull(evaluationTime, "evaluationTime");
         return this;
     }
 
     /**
-     * Enables CRL-based revocation checking against the supplied CRLs.
-     * For each non-anchor certificate in the path, a CRL whose issuer DN
-     * matches the certificate's issuer DN and whose signature verifies
-     * against the issuer's public key is applied.
-     *
-     * <p>Multiple calls accumulate CRLs. If no CRL covers a given
-     * certificate, a {@link ValidationError.Code#REVOCATION_UNKNOWN}
-     * error is recorded.
+     * Convenience: enables CRL revocation checking with the given static CRLs.
+     * Equivalent to {@code crl(c -> c.add(crls))}.
      */
     public CertValidator crl(X509CRL... crls) {
         Objects.requireNonNull(crls, "crls");
-        this.crlCheckEnabled = true;
-        for (X509CRL crl : crls) {
-            this.crls.add(Objects.requireNonNull(crl, "crl"));
-        }
+        ensureCrlConfig().add(crls);
         return this;
     }
 
-    /** List overload of {@link #crl(X509CRL...)}. */
     public CertValidator crl(List<X509CRL> crls) {
         Objects.requireNonNull(crls, "crls");
-        this.crlCheckEnabled = true;
-        for (X509CRL crl : crls) {
-            this.crls.add(Objects.requireNonNull(crl, "crl"));
-        }
+        ensureCrlConfig().add(crls);
         return this;
     }
 
-    /** Performs validation and returns the outcome. */
+    /**
+     * Configures CRL revocation checking. Enable auto-fetch, set cache TTL,
+     * HTTP timeout or proxy via {@link CrlConfig}.
+     */
+    public CertValidator crl(Consumer<CrlConfig> configurer) {
+        Objects.requireNonNull(configurer, "configurer");
+        configurer.accept(ensureCrlConfig());
+        return this;
+    }
+
+    private CrlConfig ensureCrlConfig() {
+        if (crlConfig == null) {
+            crlConfig = new CrlConfig();
+        }
+        return crlConfig;
+    }
+
     public ValidationResult validate() {
         Instant now = (evaluationTime != null) ? evaluationTime : Instant.now();
 
@@ -208,7 +205,7 @@ public final class CertValidator {
                 .notYetValid(notYetValid)
                 .trusted(trusted);
 
-        if (crlCheckEnabled) {
+        if (crlConfig != null) {
             checkRevocation(path, errors, now, builder);
         }
 
@@ -254,32 +251,80 @@ public final class CertValidator {
                                       X509Certificate issuer,
                                       Instant now,
                                       List<ValidationError> errors) {
-        for (X509CRL crl : crls) {
-            if (!crl.getIssuerX500Principal().equals(subject.getIssuerX500Principal())) {
-                continue;
+        // 1) Static CRLs supplied by the user.
+        for (X509CRL crl : crlConfig.staticCrls()) {
+            if (matchesAndValid(crl, subject, issuer, now, errors)) {
+                return crl;
             }
-            if (crl.getThisUpdate() != null && crl.getThisUpdate().toInstant().isAfter(now)) {
-                continue;
+        }
+        // 2) HTTP auto-fetch from the cert's own CDP URLs, with caching.
+        if (crlConfig.isAutoFetch()) {
+            for (String rawUrl : PkiCertInfo.of(subject).getCrlUrls()) {
+                URI uri;
+                try {
+                    uri = URI.create(rawUrl);
+                } catch (IllegalArgumentException e) {
+                    continue;
+                }
+                String scheme = uri.getScheme();
+                if (scheme == null
+                        || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+                    continue;
+                }
+                Optional<X509CRL> fetched = httpFetcher().fetch(uri);
+                if (fetched.isEmpty()) {
+                    errors.add(new ValidationError(
+                            ValidationError.Code.CRL_UNAVAILABLE,
+                            "Failed to fetch CRL for '" + subject(subject) + "' from " + rawUrl));
+                    continue;
+                }
+                X509CRL crl = fetched.get();
+                if (matchesAndValid(crl, subject, issuer, now, errors)) {
+                    return crl;
+                }
             }
-            if (crl.getNextUpdate() != null && crl.getNextUpdate().toInstant().isBefore(now)) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.CRL_UNAVAILABLE,
-                        "CRL for '" + subject(issuer) + "' is expired (nextUpdate="
-                                + crl.getNextUpdate().toInstant() + ")"));
-                continue;
-            }
-            try {
-                crl.verify(issuer.getPublicKey());
-            } catch (GeneralSecurityException e) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.CRL_UNAVAILABLE,
-                        "CRL signature for '" + subject(issuer) + "' does not verify: "
-                                + e.getMessage()));
-                continue;
-            }
-            return crl;
         }
         return null;
+    }
+
+    private boolean matchesAndValid(X509CRL crl,
+                                    X509Certificate subject,
+                                    X509Certificate issuer,
+                                    Instant now,
+                                    List<ValidationError> errors) {
+        if (!crl.getIssuerX500Principal().equals(subject.getIssuerX500Principal())) {
+            return false;
+        }
+        if (crl.getThisUpdate() != null && crl.getThisUpdate().toInstant().isAfter(now)) {
+            return false;
+        }
+        if (crl.getNextUpdate() != null && crl.getNextUpdate().toInstant().isBefore(now)) {
+            errors.add(new ValidationError(
+                    ValidationError.Code.CRL_UNAVAILABLE,
+                    "CRL for '" + subject(issuer) + "' is expired (nextUpdate="
+                            + crl.getNextUpdate().toInstant() + ")"));
+            return false;
+        }
+        try {
+            crl.verify(issuer.getPublicKey());
+        } catch (GeneralSecurityException e) {
+            errors.add(new ValidationError(
+                    ValidationError.Code.CRL_UNAVAILABLE,
+                    "CRL signature for '" + subject(issuer) + "' does not verify: "
+                            + e.getMessage()));
+            return false;
+        }
+        return true;
+    }
+
+    private HttpCrlFetcher httpFetcher() {
+        if (httpCrlFetcher == null) {
+            httpCrlFetcher = new HttpCrlFetcher(
+                    crlConfig.httpTimeout(),
+                    crlConfig.proxy(),
+                    crlConfig.cacheTtl());
+        }
+        return httpCrlFetcher;
     }
 
     private static RevocationReason extractReason(X509CRLEntry entry) {
