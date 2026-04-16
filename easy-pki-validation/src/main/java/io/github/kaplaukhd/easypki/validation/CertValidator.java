@@ -16,6 +16,8 @@
 package io.github.kaplaukhd.easypki.validation;
 
 import java.security.GeneralSecurityException;
+import java.security.cert.X509CRL;
+import java.security.cert.X509CRLEntry;
 import java.security.cert.X509Certificate;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -34,26 +36,23 @@ import java.util.Set;
  * terminate either in a self-signed root or in one of the configured
  * {@linkplain #trustAnchors(X509Certificate...) trust anchors}.
  *
- * <h2>Example</h2>
+ * <h2>Chain-only validation</h2>
  * <pre>{@code
- * ValidationResult result = CertValidator.of(leafCert)
- *     .chain(intermediate, root)
- *     .validate();
- *
- * if (!result.isValid()) {
- *     // inspect result.getErrors()
- * }
+ * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root).validate();
  * }</pre>
  *
- * <p>This initial version performs chain checks only: signatures, issuer /
- * subject DN continuity, validity windows and CA flags. Revocation (OCSP / CRL)
- * will arrive in subsequent releases.
+ * <h2>With CRL-based revocation</h2>
+ * <pre>{@code
+ * CertValidator.of(leaf).chain(intermediate, root).crl(fetchedCrl).validate();
+ * }</pre>
  */
 public final class CertValidator {
 
     private final X509Certificate certificate;
     private final List<X509Certificate> chain = new ArrayList<>();
     private final Set<X509Certificate> trustAnchors = new HashSet<>();
+    private final List<X509CRL> crls = new ArrayList<>();
+    private boolean crlCheckEnabled;
     private Instant evaluationTime;
 
     private CertValidator(X509Certificate certificate) {
@@ -115,6 +114,35 @@ public final class CertValidator {
         return this;
     }
 
+    /**
+     * Enables CRL-based revocation checking against the supplied CRLs.
+     * For each non-anchor certificate in the path, a CRL whose issuer DN
+     * matches the certificate's issuer DN and whose signature verifies
+     * against the issuer's public key is applied.
+     *
+     * <p>Multiple calls accumulate CRLs. If no CRL covers a given
+     * certificate, a {@link ValidationError.Code#REVOCATION_UNKNOWN}
+     * error is recorded.
+     */
+    public CertValidator crl(X509CRL... crls) {
+        Objects.requireNonNull(crls, "crls");
+        this.crlCheckEnabled = true;
+        for (X509CRL crl : crls) {
+            this.crls.add(Objects.requireNonNull(crl, "crl"));
+        }
+        return this;
+    }
+
+    /** List overload of {@link #crl(X509CRL...)}. */
+    public CertValidator crl(List<X509CRL> crls) {
+        Objects.requireNonNull(crls, "crls");
+        this.crlCheckEnabled = true;
+        for (X509CRL crl : crls) {
+            this.crls.add(Objects.requireNonNull(crl, "crl"));
+        }
+        return this;
+    }
+
     /** Performs validation and returns the outcome. */
     public ValidationResult validate() {
         Instant now = (evaluationTime != null) ? evaluationTime : Instant.now();
@@ -127,7 +155,6 @@ public final class CertValidator {
         boolean expired = false;
         boolean notYetValid = false;
 
-        // Per-cert validity window.
         for (X509Certificate c : path) {
             Instant notBefore = c.getNotBefore().toInstant();
             Instant notAfter = c.getNotAfter().toInstant();
@@ -145,7 +172,6 @@ public final class CertValidator {
             }
         }
 
-        // Chain: issuer DN continuity, signatures, intermediate CA flag.
         for (int i = 0; i < path.size() - 1; i++) {
             X509Certificate child = path.get(i);
             X509Certificate parent = path.get(i + 1);
@@ -176,13 +202,104 @@ public final class CertValidator {
 
         boolean trusted = determineTrust(path, errors);
 
-        return ValidationResult.builder()
+        ValidationResult.Builder builder = ValidationResult.builder()
                 .validationPath(Collections.unmodifiableList(path))
-                .errors(Collections.unmodifiableList(errors))
                 .expired(expired)
                 .notYetValid(notYetValid)
-                .trusted(trusted)
-                .build();
+                .trusted(trusted);
+
+        if (crlCheckEnabled) {
+            checkRevocation(path, errors, now, builder);
+        }
+
+        builder.errors(Collections.unmodifiableList(errors));
+        return builder.build();
+    }
+
+    private void checkRevocation(List<X509Certificate> path,
+                                 List<ValidationError> errors,
+                                 Instant now,
+                                 ValidationResult.Builder builder) {
+
+        for (int i = 0; i < path.size() - 1; i++) {
+            X509Certificate subject = path.get(i);
+            X509Certificate issuer = path.get(i + 1);
+
+            X509CRL applicable = findApplicableCrl(subject, issuer, now, errors);
+            if (applicable == null) {
+                errors.add(new ValidationError(
+                        ValidationError.Code.REVOCATION_UNKNOWN,
+                        "No valid CRL available for '" + subject(subject) + "'"));
+                continue;
+            }
+
+            X509CRLEntry entry = applicable.getRevokedCertificate(subject);
+            if (entry == null) {
+                continue;
+            }
+
+            RevocationReason reason = extractReason(entry);
+            Instant revokedAt = entry.getRevocationDate().toInstant();
+            errors.add(new ValidationError(
+                    ValidationError.Code.REVOKED,
+                    "Certificate '" + subject(subject) + "' was revoked on "
+                            + revokedAt + " (" + reason + ")"));
+            if (!builder.isRevoked()) {
+                builder.revoked(reason, revokedAt);
+            }
+        }
+    }
+
+    private X509CRL findApplicableCrl(X509Certificate subject,
+                                      X509Certificate issuer,
+                                      Instant now,
+                                      List<ValidationError> errors) {
+        for (X509CRL crl : crls) {
+            if (!crl.getIssuerX500Principal().equals(subject.getIssuerX500Principal())) {
+                continue;
+            }
+            if (crl.getThisUpdate() != null && crl.getThisUpdate().toInstant().isAfter(now)) {
+                continue;
+            }
+            if (crl.getNextUpdate() != null && crl.getNextUpdate().toInstant().isBefore(now)) {
+                errors.add(new ValidationError(
+                        ValidationError.Code.CRL_UNAVAILABLE,
+                        "CRL for '" + subject(issuer) + "' is expired (nextUpdate="
+                                + crl.getNextUpdate().toInstant() + ")"));
+                continue;
+            }
+            try {
+                crl.verify(issuer.getPublicKey());
+            } catch (GeneralSecurityException e) {
+                errors.add(new ValidationError(
+                        ValidationError.Code.CRL_UNAVAILABLE,
+                        "CRL signature for '" + subject(issuer) + "' does not verify: "
+                                + e.getMessage()));
+                continue;
+            }
+            return crl;
+        }
+        return null;
+    }
+
+    private static RevocationReason extractReason(X509CRLEntry entry) {
+        java.security.cert.CRLReason jdk = entry.getRevocationReason();
+        if (jdk == null) {
+            return RevocationReason.UNSPECIFIED;
+        }
+        return switch (jdk) {
+            case UNSPECIFIED -> RevocationReason.UNSPECIFIED;
+            case KEY_COMPROMISE -> RevocationReason.KEY_COMPROMISE;
+            case CA_COMPROMISE -> RevocationReason.CA_COMPROMISE;
+            case AFFILIATION_CHANGED -> RevocationReason.AFFILIATION_CHANGED;
+            case SUPERSEDED -> RevocationReason.SUPERSEDED;
+            case CESSATION_OF_OPERATION -> RevocationReason.CESSATION_OF_OPERATION;
+            case CERTIFICATE_HOLD -> RevocationReason.CERTIFICATE_HOLD;
+            case REMOVE_FROM_CRL -> RevocationReason.REMOVE_FROM_CRL;
+            case PRIVILEGE_WITHDRAWN -> RevocationReason.PRIVILEGE_WITHDRAWN;
+            case AA_COMPROMISE -> RevocationReason.AA_COMPROMISE;
+            case UNUSED -> RevocationReason.UNSPECIFIED;
+        };
     }
 
     private boolean determineTrust(List<X509Certificate> path, List<ValidationError> errors) {
