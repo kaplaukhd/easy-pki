@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added — easy-pki-test (0.4.0 in progress)
+### Changed
+- Version bumped to `1.0.0-SNAPSHOT`. All four modules are feature-complete;
+  the public API is frozen for the upcoming `1.0.0` release.
+- README overhauled to document every module with examples, feature matrix,
+  installation snippets and a side-by-side comparison against raw BouncyCastle.
+
+### Added — easy-pki-test (0.4.0)
 - New module `easy-pki-test` (consume with `scope=test`).
 - `TestPki.create().withRootCa().withIntermediateCa().build()` spins up
   a self-contained in-memory PKI hierarchy with sensible defaults
