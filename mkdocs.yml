@@ -1,0 +1,78 @@
+site_name: easy-pki
+site_description: A fluent Java API for PKI operations — BouncyCastle under the hood, ergonomics on top.
+site_author: kaplaukhd
+site_url: https://kaplaukhd.github.io/easy-pki/
+repo_url: https://github.com/kaplaukhd/easy-pki
+repo_name: kaplaukhd/easy-pki
+edit_uri: edit/main/docs/
+copyright: Copyright © 2026 kaplaukhd. Licensed under Apache 2.0.
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - toc.follow
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Modules:
+      - Core: modules/core.md
+      - Validation: modules/validation.md
+      - Spring Boot starter: modules/spring-boot.md
+      - Test helpers: modules/testing.md
+  - Cookbook: cookbook.md
+  - Migration from BouncyCastle: migration.md
+  - Changelog: https://github.com/kaplaukhd/easy-pki/blob/main/CHANGELOG.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.snippets
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kaplaukhd/easy-pki
+  version:
+    default: latest
