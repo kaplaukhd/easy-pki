@@ -37,25 +37,27 @@ import io.github.kaplaukhd.easypki.PkiCertInfo;
 /**
  * Fluent certificate validator.
  *
+ * <p>Validates a certificate against a provided chain. The chain must
+ * terminate either in a self-signed root or in one of the configured
+ * {@linkplain #trustAnchors(X509Certificate...) trust anchors}.
+ *
  * <h2>Simple chain check</h2>
  * <pre>{@code
  * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root).validate();
  * }</pre>
  *
- * <h2>CRL-based revocation</h2>
+ * <h2>With CRL-based revocation</h2>
  * <pre>{@code
- * CertValidator.of(leaf)
- *     .chain(intermediate, root)
- *     .crl(c -> c.autoFetch().cache(Duration.ofMinutes(30)))
- *     .validate();
- * }</pre>
+ * // Static CRLs (off-line):
+ * CertValidator.of(leaf).chain(intermediate, root).crl(fetchedCrl).validate();
  *
- * <h2>OCSP-based revocation with CRL fallback</h2>
- * <pre>{@code
+ * // HTTP auto-fetch from each cert's CDP extension, with a 30-minute cache:
  * CertValidator.of(leaf)
  *     .chain(intermediate, root)
- *     .ocsp(o -> o.timeout(Duration.ofSeconds(5)))
- *     .crl(c -> c.autoFetch())        // fallback if OCSP is unavailable
+ *     .crl(c -> c.autoFetch()
+ *                .cache(Duration.ofMinutes(30))
+ *                .timeout(Duration.ofSeconds(10))
+ *                .proxy("http://proxy.corp:3128"))
  *     .validate();
  * }</pre>
  */
@@ -74,11 +76,17 @@ public final class CertValidator {
         this.certificate = certificate;
     }
 
+    /** Starts validation of the given certificate. */
     public static CertValidator of(X509Certificate certificate) {
         Objects.requireNonNull(certificate, "certificate");
         return new CertValidator(certificate);
     }
 
+    /**
+     * Supplies the chain of intermediates and (optionally) the root.
+     * If the root is included and is self-signed, it becomes an implicit
+     * trust anchor. Multiple calls accumulate.
+     */
     public CertValidator chain(X509Certificate... chain) {
         Objects.requireNonNull(chain, "chain");
         for (X509Certificate c : chain) {
@@ -87,6 +95,7 @@ public final class CertValidator {
         return this;
     }
 
+    /** Overload that accepts a {@link List}. */
     public CertValidator chain(List<X509Certificate> chain) {
         Objects.requireNonNull(chain, "chain");
         for (X509Certificate c : chain) {
@@ -95,35 +104,54 @@ public final class CertValidator {
         return this;
     }
 
+    /**
+     * Registers explicit trust anchors. If the chain does not terminate in a
+     * self-signed root, the last certificate's issuer must be one of the
+     * configured anchors and its signature must verify against that anchor.
+     */
     public CertValidator trustAnchors(X509Certificate... anchors) {
         Objects.requireNonNull(anchors, "anchors");
         this.trustAnchors.addAll(Arrays.asList(anchors));
         return this;
     }
 
+    /** Overload that accepts a collection. */
     public CertValidator trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
         this.trustAnchors.addAll(anchors);
         return this;
     }
 
+    /**
+     * Sets the instant at which validity is evaluated. Default is now.
+     * Useful for historical or future-dated checks.
+     */
     public CertValidator at(Instant evaluationTime) {
         this.evaluationTime = Objects.requireNonNull(evaluationTime, "evaluationTime");
         return this;
     }
 
+    /**
+     * Convenience: enables CRL revocation checking with the given static CRLs.
+     * Equivalent to {@code crl(c -> c.add(crls))}.
+     */
     public CertValidator crl(X509CRL... crls) {
         Objects.requireNonNull(crls, "crls");
         ensureCrlConfig().add(crls);
         return this;
     }
 
+    /** List overload of {@link #crl(X509CRL...)}. */
     public CertValidator crl(List<X509CRL> crls) {
         Objects.requireNonNull(crls, "crls");
         ensureCrlConfig().add(crls);
         return this;
     }
 
+    /**
+     * Configures CRL revocation checking. Enable auto-fetch, set cache TTL,
+     * HTTP timeout or proxy via {@link CrlConfig}.
+     */
     public CertValidator crl(Consumer<CrlConfig> configurer) {
         Objects.requireNonNull(configurer, "configurer");
         configurer.accept(ensureCrlConfig());
@@ -160,6 +188,20 @@ public final class CertValidator {
         return ocspConfig;
     }
 
+    /**
+     * Convenience that enables OCSP with CRL auto-fetch as a fallback. The
+     * resulting behaviour is equivalent to
+     * {@code .ocsp().crl(c -> c.autoFetch())}. Further refinements (explicit
+     * URLs, timeouts, proxies) can be added via subsequent {@link #ocsp(Consumer)}
+     * or {@link #crl(Consumer)} calls.
+     */
+    public CertValidator ocspWithCrlFallback() {
+        ensureOcspConfig();
+        ensureCrlConfig().autoFetch();
+        return this;
+    }
+
+    /** Performs validation and returns the outcome. */
     public ValidationResult validate() {
         Instant now = (evaluationTime != null) ? evaluationTime : Instant.now();
 
@@ -171,6 +213,7 @@ public final class CertValidator {
         boolean expired = false;
         boolean notYetValid = false;
 
+        // Per-cert validity window.
         for (X509Certificate c : path) {
             Instant notBefore = c.getNotBefore().toInstant();
             Instant notAfter = c.getNotAfter().toInstant();
@@ -188,6 +231,7 @@ public final class CertValidator {
             }
         }
 
+        // Chain: issuer DN continuity, signatures, intermediate CA flag.
         for (int i = 0; i < path.size() - 1; i++) {
             X509Certificate child = path.get(i);
             X509Certificate parent = path.get(i + 1);
@@ -270,6 +314,7 @@ public final class CertValidator {
                                         + outcome.detail()));
                     }
                 }
+                // No URL available for this cert — silently fall through to CRL.
             }
 
             if (determined) {
@@ -331,15 +376,27 @@ public final class CertValidator {
         return null;
     }
 
+    private OcspClient ocspClient() {
+        if (ocspClient == null) {
+            ocspClient = new OcspClient(
+                    ocspConfig.timeout(),
+                    ocspConfig.proxy(),
+                    ocspConfig.isNonceEnabled());
+        }
+        return ocspClient;
+    }
+
     private X509CRL findApplicableCrl(X509Certificate subject,
                                       X509Certificate issuer,
                                       Instant now,
                                       List<ValidationError> errors) {
+        // 1) Static CRLs supplied by the user.
         for (X509CRL crl : crlConfig.staticCrls()) {
             if (matchesAndValid(crl, subject, issuer, now, errors)) {
                 return crl;
             }
         }
+        // 2) HTTP auto-fetch from the cert's own CDP URLs, with caching.
         if (crlConfig.isAutoFetch()) {
             for (String rawUrl : PkiCertInfo.of(subject).getCrlUrls()) {
                 URI uri;
@@ -348,6 +405,7 @@ public final class CertValidator {
                 } catch (IllegalArgumentException e) {
                     continue;
                 }
+                // Only http/https; other schemes (e.g. ldap://) are out of scope.
                 String scheme = uri.getScheme();
                 if (scheme == null
                         || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
@@ -407,16 +465,6 @@ public final class CertValidator {
                     crlConfig.cacheTtl());
         }
         return httpCrlFetcher;
-    }
-
-    private OcspClient ocspClient() {
-        if (ocspClient == null) {
-            ocspClient = new OcspClient(
-                    ocspConfig.timeout(),
-                    ocspConfig.proxy(),
-                    ocspConfig.isNonceEnabled());
-        }
-        return ocspClient;
     }
 
     private static RevocationReason extractReason(X509CRLEntry entry) {
