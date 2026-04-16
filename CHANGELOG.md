@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by issuer DN, verifies the CRL's signature against the issuer's public
   key, enforces `thisUpdate`/`nextUpdate` freshness, and reports
   `REVOKED`, `REVOCATION_UNKNOWN`, or `CRL_UNAVAILABLE` accordingly.
+- `CrlConfig` + `CertValidator.crl(Consumer<CrlConfig>)` — full CRL
+  configuration with HTTP auto-fetch from the certificate's CRL
+  Distribution Points, in-memory TTL cache, per-request HTTP timeout and
+  optional proxy. Transport uses the JDK's built-in `java.net.http.HttpClient`.
 
 ### Added — easy-pki-core
 - Initial project skeleton: Maven multi-module layout, `easy-pki-core` module.
