@@ -118,7 +118,11 @@
                     <configuration>
                         <release>${maven.compiler.release}</release>
                         <compilerArgs>
-                            <arg>-Xlint:all</arg>
+                            <!-- "-processing" suppresses the warning emitted when an
+                                 annotation processor (e.g. spring-boot-configuration-processor)
+                                 does not claim every scanned annotation. Harmless but fatal
+                                 under -Werror. -->
+                            <arg>-Xlint:all,-processing</arg>
                             <arg>-Werror</arg>
                             <arg>-parameters</arg>
                         </compilerArgs>
