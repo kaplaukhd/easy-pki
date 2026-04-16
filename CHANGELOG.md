@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Monitor is auto-wired only when
   `easy-pki.monitoring.enabled=true`; the host application does not need
   `@EnableScheduling`.
+- `EasyPkiHealthIndicator` — Spring Boot Actuator health contributor
+  reporting `UP` / `DOWN` based on certificate expiry in the trust and
+  key stores. Certificates expiring within the configured warn window are
+  flagged in the details. Auto-registered as the `easyPkiHealthIndicator`
+  bean only when Spring Boot Actuator is on the classpath.
 
 ### Added — easy-pki-validation (0.2.0)
 - New module `easy-pki-validation` depending on `easy-pki-core`.
