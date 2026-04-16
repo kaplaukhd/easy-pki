@@ -175,5 +175,32 @@ public final class TestPki {
         return builder.build();
     }
 
-    private record RevocationEntry(RevocationReason reason, Instant revokedAt) {}
+    /**
+     * Starts a local in-memory OCSP responder backed by this PKI. The caller
+     * owns the lifecycle — close it (or use try-with-resources) when done.
+     *
+     * <pre>{@code
+     * try (TestOcspResponder ocsp = pki.startOcspResponder()) {
+     *     X509Certificate cert = pki.issueCert()
+     *         .subject("CN=host")
+     *         .ocsp(ocsp.getUrl())
+     *         .build();
+     *     // ...
+     * }
+     * }</pre>
+     */
+    public TestOcspResponder startOcspResponder() {
+        try {
+            return new TestOcspResponder(this);
+        } catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException("Failed to start OCSP responder", e);
+        }
+    }
+
+    // Package-private: responder queries the current revocation state.
+    RevocationEntry revocationOf(BigInteger serial) {
+        return revocations.get(serial);
+    }
+
+    record RevocationEntry(RevocationReason reason, Instant revokedAt) {}
 }
