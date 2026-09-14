@@ -18,13 +18,19 @@ package io.github.kaplaukhd.easypki.validation;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.KeyStoreException;
+import java.security.cert.CertPathBuilder;
+import java.security.cert.CertStore;
 import java.security.cert.Certificate;
+import java.security.cert.CollectionCertStoreParameters;
+import java.security.cert.PKIXBuilderParameters;
+import java.security.cert.PKIXCertPathBuilderResult;
+import java.security.cert.TrustAnchor;
 import java.security.cert.X509Certificate;
+import java.security.cert.X509CertSelector;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Enumeration;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -44,11 +50,17 @@ import java.util.Set;
  * ValidationResult result = chain.validate();
  * }</pre>
  *
- * <p>The algorithm walks from the leaf upward, at each step choosing a
- * candidate whose subject DN matches the current certificate's issuer DN and
- * whose public key verifies the current certificate's signature. Termination
- * is reached when an explicit trust anchor is matched, or when a self-signed
- * certificate in the trust anchors is encountered.
+ * <p>Uses the JCA PKIX path builder to find a valid path to an explicitly
+ * configured trust anchor, considering alternative issuer certificates when
+ * a candidate path fails. Certificates in the intermediate pool do not become
+ * trusted merely because they are self-signed. The returned chain includes
+ * its anchor, which can also be an explicitly trusted intermediate or target
+ * certificate.
+ *
+ * <p>PKIX checks validity at the current time and certificate constraints for
+ * certificates below the trust anchor.
+ * Revocation checking is disabled during building; configure it separately
+ * through {@link CertChain#toValidator()} when needed.
  */
 public final class ChainBuilder {
 
@@ -68,31 +80,29 @@ public final class ChainBuilder {
         return new ChainBuilder(certificate);
     }
 
-    /** Adds candidate intermediate certificates. Multiple calls accumulate. */
+    /** Adds candidate intermediates. Multiple calls accumulate; nulls are rejected. */
     public ChainBuilder intermediates(X509Certificate... certs) {
         Objects.requireNonNull(certs, "certs");
-        intermediates.addAll(Arrays.asList(certs));
-        return this;
+        return intermediates(Arrays.asList(certs));
     }
 
     /** Collection overload of {@link #intermediates(X509Certificate...)}. */
     public ChainBuilder intermediates(Collection<X509Certificate> certs) {
         Objects.requireNonNull(certs, "certs");
-        intermediates.addAll(certs);
+        intermediates.addAll(List.copyOf(certs));
         return this;
     }
 
-    /** Adds explicit trust anchors. Multiple calls accumulate. */
+    /** Adds explicit trust anchors. Multiple calls accumulate; nulls are rejected. */
     public ChainBuilder trustAnchors(X509Certificate... anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        trustAnchors.addAll(Arrays.asList(anchors));
-        return this;
+        return trustAnchors(Arrays.asList(anchors));
     }
 
     /** Collection overload of {@link #trustAnchors(X509Certificate...)}. */
     public ChainBuilder trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        trustAnchors.addAll(anchors);
+        trustAnchors.addAll(List.copyOf(anchors));
         return this;
     }
 
@@ -123,8 +133,13 @@ public final class ChainBuilder {
     /**
      * Builds the chain from the configured leaf, intermediates and anchors.
      *
-     * @throws IllegalStateException if no path can be built, the chain exceeds
-     *         {@value #MAX_DEPTH} levels, or required inputs are missing.
+     * <p>At most 19 non-self-issued intermediate certificates are allowed,
+     * excluding the target and trust anchor. An explicitly trusted target
+     * produces a one-certificate chain without requiring its issuer.
+     *
+     * @throws IllegalStateException if no valid path can be built within the
+     *         depth limit, or no trust anchors are configured. PKIX failures
+     *         are retained as the cause.
      */
     public CertChain build() {
         if (trustAnchors.isEmpty()) {
@@ -132,72 +147,41 @@ public final class ChainBuilder {
                     "At least one trust anchor (or a trust store) is required");
         }
 
-        List<X509Certificate> path = new ArrayList<>();
-        path.add(certificate);
-
-        Set<X509Certificate> remaining = new HashSet<>(intermediates);
-        X509Certificate current = certificate;
-
-        for (int depth = 0; depth < MAX_DEPTH; depth++) {
-            // 1) If the current cert is already a trust anchor, we're done.
-            X509Certificate anchor = matchingAnchor(current);
-            if (anchor != null) {
-                // The current cert is the anchor itself — nothing to append.
-                return new CertChain(path, current);
-            }
-
-            // 2) Try to find the issuer among the explicit trust anchors.
-            for (X509Certificate a : trustAnchors) {
-                if (signedBy(current, a)) {
-                    path.add(a);
-                    return new CertChain(path, a);
-                }
-            }
-
-            // 3) Otherwise, find it in the intermediate pool.
-            X509Certificate parent = null;
-            for (X509Certificate candidate : remaining) {
-                if (signedBy(current, candidate)) {
-                    parent = candidate;
-                    break;
-                }
-            }
-            if (parent == null) {
-                throw new IllegalStateException(
-                        "Unable to build chain: no issuer found for '"
-                                + current.getSubjectX500Principal().getName() + "'");
-            }
-            path.add(parent);
-            remaining.remove(parent);
-            current = parent;
+        // A trust anchor is input to PKIX, not a certificate in the path.
+        // Handle an explicitly trusted target without requiring it to be a CA.
+        if (trustAnchors.contains(certificate)) {
+            return new CertChain(List.of(certificate), certificate);
         }
-        throw new IllegalStateException(
-                "Chain exceeds maximum depth of " + MAX_DEPTH);
-    }
 
-    /**
-     * Returns the trust anchor that equals {@code cert}, or {@code null} if
-     * none matches. Equality is by certificate identity (encoded form).
-     */
-    private X509Certificate matchingAnchor(X509Certificate cert) {
-        for (X509Certificate a : trustAnchors) {
-            if (a.equals(cert)) {
-                return a;
-            }
+        Set<TrustAnchor> anchors = new LinkedHashSet<>();
+        for (X509Certificate anchor : trustAnchors) {
+            anchors.add(new TrustAnchor(anchor, null));
         }
-        return null;
-    }
-
-    private static boolean signedBy(X509Certificate child, X509Certificate candidateParent) {
-        if (!candidateParent.getSubjectX500Principal()
-                .equals(child.getIssuerX500Principal())) {
-            return false;
-        }
+        X509CertSelector target = new X509CertSelector();
+        target.setCertificate(certificate);
         try {
-            child.verify(candidateParent.getPublicKey());
-            return true;
+            PKIXBuilderParameters parameters = new PKIXBuilderParameters(anchors, target);
+            parameters.setRevocationEnabled(false);
+            // Preserve the existing allowance of 19 intermediates rather than
+            // inheriting PKIXBuilderParameters' default limit of five.
+            parameters.setMaxPathLength(MAX_DEPTH - 1);
+            List<X509Certificate> candidates = new ArrayList<>(intermediates);
+            candidates.add(certificate);
+            parameters.addCertStore(CertStore.getInstance("Collection",
+                    new CollectionCertStoreParameters(candidates)));
+
+            PKIXCertPathBuilderResult result = (PKIXCertPathBuilderResult)
+                    CertPathBuilder.getInstance("PKIX").build(parameters);
+            List<X509Certificate> path = new ArrayList<>();
+            for (Certificate cert : result.getCertPath().getCertificates()) {
+                path.add((X509Certificate) cert);
+            }
+            X509Certificate anchor = result.getTrustAnchor().getTrustedCert();
+            path.add(anchor);
+            return new CertChain(path, anchor);
         } catch (GeneralSecurityException e) {
-            return false;
+            throw new IllegalStateException(
+                    "Unable to build a valid certificate path to a configured trust anchor", e);
         }
     }
 }

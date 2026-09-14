@@ -140,6 +140,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp()
                 .validate();
 
@@ -157,6 +158,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp()
                 .validate();
 
@@ -172,6 +174,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp()
                 .validate();
 
@@ -193,6 +196,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp(o -> o.timeout(Duration.ofSeconds(2)))
                 .validate();
 
@@ -217,6 +221,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(bare)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp(o -> o.url(ocspUrl()))
                 .validate();
 
@@ -244,6 +249,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp(o -> o.timeout(Duration.ofSeconds(2)))
                 .crl(leafCrl, intermediateCrl)
                 .validate();
@@ -268,6 +274,7 @@ class CertValidatorOcspTest {
 
         ValidationResult result = CertValidator.of(bare)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .ocsp()
                 .validate();
 

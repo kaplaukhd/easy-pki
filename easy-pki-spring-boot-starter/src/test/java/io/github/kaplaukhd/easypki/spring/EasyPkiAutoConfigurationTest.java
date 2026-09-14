@@ -28,6 +28,7 @@ import io.github.kaplaukhd.easypki.Pkcs12Bundle;
 import io.github.kaplaukhd.easypki.PkiCertificate;
 import io.github.kaplaukhd.easypki.PkiKeys;
 import io.github.kaplaukhd.easypki.PkiPkcs12;
+import io.github.kaplaukhd.easypki.validation.ValidationError;
 import io.github.kaplaukhd.easypki.validation.ValidationResult;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -136,6 +137,56 @@ class EasyPkiAutoConfigurationTest {
                 .run(ctx -> {
                     EasyPkiValidator validator = ctx.getBean(EasyPkiValidator.class);
                     assertThat(validator.getTrustAnchors()).isEmpty();
+                });
+    }
+
+    @Test
+    void validatorRejectsPresentedSelfSignedCertificateWithoutTrustStore() {
+        contextRunner
+                .withPropertyValues("easy-pki.validation.mode=NONE")
+                .run(ctx -> {
+                    EasyPkiValidator validator = ctx.getBean(EasyPkiValidator.class);
+
+                    ValidationResult result = validator.validate(root);
+
+                    assertThat(result.isValid()).isFalse();
+                    assertThat(result.isTrusted()).isFalse();
+                    assertThat(result.getErrors()).extracting(ValidationError::code)
+                            .contains(ValidationError.Code.UNTRUSTED_ROOT);
+                });
+    }
+
+    @Test
+    void validatorRejectsCompletePresentedChainWithoutTrustStore() {
+        contextRunner
+                .withPropertyValues("easy-pki.validation.mode=NONE")
+                .run(ctx -> {
+                    EasyPkiValidator validator = ctx.getBean(EasyPkiValidator.class);
+
+                    ValidationResult result = validator.validate(leaf, root);
+
+                    assertThat(result.isValid()).isFalse();
+                    assertThat(result.isTrusted()).isFalse();
+                    assertThat(result.getErrors()).extracting(ValidationError::code)
+                            .contains(ValidationError.Code.UNTRUSTED_ROOT);
+                });
+    }
+
+    @Test
+    void validatorUsesConfiguredAnchorWhenPeerOmitsRoot() {
+        contextRunner
+                .withPropertyValues(
+                        "easy-pki.trust-store.path=file:" + trustStoreFile.toAbsolutePath(),
+                        "easy-pki.trust-store.password=changeit",
+                        "easy-pki.validation.mode=NONE")
+                .run(ctx -> {
+                    EasyPkiValidator validator = ctx.getBean(EasyPkiValidator.class);
+
+                    ValidationResult result = validator.validate(leaf);
+
+                    assertThat(result.isValid()).isTrue();
+                    assertThat(result.isTrusted()).isTrue();
+                    assertThat(result.getValidationPath()).containsExactly(leaf);
                 });
     }
 

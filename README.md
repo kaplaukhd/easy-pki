@@ -252,23 +252,39 @@ info.getPublicKeySize();                     // 256
 ```java
 ValidationResult r = CertValidator.of(leaf)
     .chain(intermediate, root)
+    .trustAnchors(root)     // root configured by the application
     .validate();
 
 r.isValid();            // boolean
+r.isTrusted();          // linkage to an explicit anchor; not the full validation result
 r.getValidationPath();  // ordered: [leaf, intermediate, root]
 r.getErrors();          // typed ValidationError list
 ```
+
+Trust anchors must come from application configuration, separately from the
+peer's certificate chain. A self-signed certificate or a root passed only to
+`chain(...)` does not establish trust. `CertValidator` checks the supplied
+ordered chain with PKIX; use `ChainBuilder` for an unordered certificate pool.
+Use `isValid()` to decide whether all configured checks passed.
+
+The configured terminal anchor is excluded from PKIX path checks: its own
+expiry, self-signature and extensions are not validated. The result's
+`getValidationPath()` remains the supplied leaf and chain; an anchor omitted
+from the input is not appended. See the [migration notes](docs/migration.md)
+for the breaking change from earlier snapshots.
 
 ### Revocation: CRL, OCSP, and fallback
 
 ```java
 // Static CRL you already have in memory
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .crl(existingCrl)
     .validate();
 
 // Auto-fetch CRLs from the certificate's CDP, with a 30-minute cache
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .crl(c -> c.autoFetch()
                .cache(Duration.ofMinutes(30))
                .timeout(Duration.ofSeconds(10))
@@ -277,6 +293,7 @@ CertValidator.of(leaf).chain(intermediate, root)
 
 // OCSP with nonce, then CRL fallback on unavailability
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .ocspWithCrlFallback()
     .ocsp(o -> o.timeout(Duration.ofSeconds(5)))
     .crl(c -> c.autoFetch())
@@ -291,11 +308,16 @@ CertChain chain = ChainBuilder.of(leaf)
     .trustStore(keyStore)              // or .trustAnchors(roots...)
     .build();                          // throws if no path exists
 
-chain.getCertificates();  // leaf, ..., root
+chain.getCertificates();  // leaf, ..., selected anchor, included once
 chain.toValidator()
     .ocspWithCrlFallback()
     .validate();
 ```
+
+`ChainBuilder` uses PKIX to search the pool for a valid path, including
+alternative cross-signed branches. The selected trust anchor may be an
+explicitly trusted intermediate. `validate()` and `toValidator()` retain
+that configured trust.
 
 ---
 
@@ -442,7 +464,7 @@ class MyServiceTest {
 | Inspection | `PkiCertInfo.of(cert)` — 20+ accessors including fingerprints |
 | CRL build | `PkiCrl.issued()...build()` with auto CRLNumber / AKI |
 | CRL I/O | `PkiCrls.toPem / toDer / fromFile` (auto-detect) |
-| Chain validation | `CertValidator` — signatures, DN continuity, CA flag, validity, trust anchors |
+| Chain validation | `CertValidator` — PKIX validation of an ordered chain against explicit trust anchors |
 | OCSP | `.ocsp(...)` — nonce, AIA-derived or explicit URL, proxy, timeout |
 | CRL | `.crl(...)` — static list **or** HTTP auto-fetch with TTL cache + proxy |
 | Fallback | `.ocspWithCrlFallback()` — OCSP first, CRL on failure |

@@ -71,6 +71,7 @@ class CertValidatorTest {
     void validChainPasses() {
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isTrue();
@@ -95,6 +96,7 @@ class CertValidatorTest {
 
         ValidationResult result = CertValidator.of(expired)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isFalse();
@@ -116,6 +118,7 @@ class CertValidatorTest {
 
         ValidationResult result = CertValidator.of(future)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isFalse();
@@ -148,6 +151,7 @@ class CertValidatorTest {
 
         ValidationResult atPast = CertValidator.of(oldLeaf)
                 .chain(oldRoot)
+                .trustAnchors(oldRoot)
                 .at(historicalPoint)
                 .validate();
         assertThat(atPast.isValid()).isTrue();
@@ -156,6 +160,7 @@ class CertValidatorTest {
         // Same certificate evaluated "now" is clearly expired.
         ValidationResult atNow = CertValidator.of(oldLeaf)
                 .chain(oldRoot)
+                .trustAnchors(oldRoot)
                 .validate();
         assertThat(atNow.isValid()).isFalse();
         assertThat(atNow.isExpired()).isTrue();
@@ -183,6 +188,7 @@ class CertValidatorTest {
         // Present the REAL intermediate in the chain — mismatch with who actually signed.
         ValidationResult result = CertValidator.of(leafSignedByAttacker)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isFalse();
@@ -204,6 +210,7 @@ class CertValidatorTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, otherRoot) // wrong root after intermediate
+                .trustAnchors(otherRoot)
                 .validate();
 
         assertThat(result.isValid()).isFalse();
@@ -234,6 +241,7 @@ class CertValidatorTest {
 
         ValidationResult result = CertValidator.of(leafBelowPseudo)
                 .chain(pseudoCa, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isFalse();
@@ -286,7 +294,7 @@ class CertValidatorTest {
 
     @Test
     void directlyValidatingASelfSignedRootWorks() {
-        ValidationResult result = CertValidator.of(root).validate();
+        ValidationResult result = CertValidator.of(root).trustAnchors(root).validate();
 
         assertThat(result.isValid()).isTrue();
         assertThat(result.isTrusted()).isTrue();

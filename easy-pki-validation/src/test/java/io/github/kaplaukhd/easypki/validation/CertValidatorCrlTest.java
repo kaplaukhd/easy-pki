@@ -73,6 +73,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(leafCrl, intermediateCrl)
                 .validate();
 
@@ -94,6 +95,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(leafCrl, intermediateCrl)
                 .validate();
 
@@ -119,6 +121,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(leafCrl, intermediateCrl)
                 .validate();
 
@@ -136,6 +139,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)
                 .validate();
 
@@ -160,6 +164,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(staleCrl, intermediateCrl)
                 .validate();
 
@@ -191,6 +196,7 @@ class CertValidatorCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(fakeCrl, intermediateCrl)
                 .validate();
 
@@ -214,6 +220,7 @@ class CertValidatorCrlTest {
         // No .crl(...) call → no revocation checking.
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .validate();
 
         assertThat(result.isValid()).isTrue();

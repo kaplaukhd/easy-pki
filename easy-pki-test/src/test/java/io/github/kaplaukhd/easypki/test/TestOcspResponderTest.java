@@ -38,6 +38,7 @@ class TestOcspResponderTest {
 
             ValidationResult result = CertValidator.of(leaf)
                     .chain(pki.getIntermediateCa(), pki.getRootCa())
+                    .trustAnchors(pki.getTrustAnchors())
                     .ocsp()
                     .validate();
 
@@ -59,6 +60,7 @@ class TestOcspResponderTest {
 
             ValidationResult result = CertValidator.of(leaf)
                     .chain(pki.getIntermediateCa(), pki.getRootCa())
+                    .trustAnchors(pki.getTrustAnchors())
                     .ocsp()
                     .validate();
 
@@ -80,6 +82,7 @@ class TestOcspResponderTest {
             // First query: GOOD
             ValidationResult first = CertValidator.of(leaf)
                     .chain(pki.getIntermediateCa(), pki.getRootCa())
+                    .trustAnchors(pki.getTrustAnchors())
                     .ocsp()
                     .validate();
             assertThat(first.isRevoked()).isFalse();
@@ -88,6 +91,7 @@ class TestOcspResponderTest {
             pki.revoke(leaf, RevocationReason.CA_COMPROMISE);
             ValidationResult second = CertValidator.of(leaf)
                     .chain(pki.getIntermediateCa(), pki.getRootCa())
+                    .trustAnchors(pki.getTrustAnchors())
                     .ocsp()
                     .validate();
             assertThat(second.isRevoked()).isTrue();
@@ -107,6 +111,7 @@ class TestOcspResponderTest {
         X509Certificate leaf = pki.issueCert().subject("CN=dangling").ocsp(url).build();
         ValidationResult r = CertValidator.of(leaf)
                 .chain(pki.getRootCa())
+                .trustAnchors(pki.getTrustAnchors())
                 .ocsp(o -> o.timeout(java.time.Duration.ofSeconds(2)))
                 .validate();
 

@@ -8,8 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
-- Version bumped to `1.0.0-SNAPSHOT`. All four modules are feature-complete;
-  the public API is frozen for the upcoming `1.0.0` release.
+- Version bumped to `1.0.0-SNAPSHOT`. Validation contracts are being hardened
+  before the upcoming `1.0.0` release.
+- **Breaking — explicit trust:** `CertValidator` requires configured
+  trust anchors. A self-signed certificate or a root supplied only in
+  `chain(...)` no longer establishes trust. `isTrusted()` reports anchor
+  linkage; `isValid()` remains the overall acceptance decision. Spring
+  validators without configured trust reject peer-supplied chains.
+- **Breaking — PKIX validation:** ordered certificate paths are
+  checked by JCA PKIX, including path length, issuer KeyUsage, name
+  constraints, critical extensions, certificate policies and applicable
+  algorithm constraints. The configured terminal anchor is excluded from
+  those checks; its own expiry, self-signature and extensions are not
+  validated. `getValidationPath()` still returns the subject and supplied
+  chain without appending an omitted anchor. Configured CRL/OCSP checks
+  run only after the path passes validation; their revocation policies
+  and response handling are unchanged.
+- **PKIX path building:** `ChainBuilder` searches an unordered
+  intermediate pool for a valid path to configured trust, including
+  alternative cross-signed branches. The resulting `CertChain` includes the
+  selected anchor once and retains it for subsequent validation.
 - README overhauled to document every module with examples, feature matrix,
   installation snippets and a side-by-side comparison against raw BouncyCastle.
 

@@ -98,6 +98,7 @@ class TestPkiCrlTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(pki.getIntermediateCa(), pki.getRootCa())
+                .trustAnchors(pki.getTrustAnchors())
                 .crl(pki.getCrl())
                 .validate();
 

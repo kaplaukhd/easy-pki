@@ -35,7 +35,7 @@ public record ValidationError(Code code, String message) {
         BROKEN_SIGNATURE,
         /** An intermediate in the chain lacks the {@code cA=TRUE} basic constraint. */
         NOT_A_CA,
-        /** The chain does not terminate in a trusted root. */
+        /** No explicit trust is configured, or the chain cannot reach a configured anchor. */
         UNTRUSTED_ROOT,
         /** The chain is empty or missing required certificates. */
         INCOMPLETE_CHAIN,
@@ -46,6 +46,20 @@ public record ValidationError(Code code, String message) {
         /** OCSP responder was unreachable or returned a malformed response. */
         OCSP_UNAVAILABLE,
         /** A CRL could not be fetched or parsed. */
-        CRL_UNAVAILABLE
+        CRL_UNAVAILABLE,
+        /** A CA's permitted certification path length was exceeded. */
+        PATH_TOO_LONG,
+        /** A certificate's key usage does not permit its role in the path. */
+        INVALID_KEY_USAGE,
+        /** A name constraint was violated. */
+        INVALID_NAME,
+        /** A critical extension is not understood by the PKIX validator. */
+        UNRECOGNIZED_CRITICAL_EXTENSION,
+        /** An algorithm or key is prohibited by the host PKIX security policy. */
+        ALGORITHM_CONSTRAINED,
+        /** The path does not satisfy PKIX certificate policy processing. */
+        INVALID_POLICY,
+        /** Another PKIX validation or provider failure occurred. */
+        PKIX_VALIDATION_FAILED
     }
 }

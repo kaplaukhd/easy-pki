@@ -53,6 +53,7 @@ class TestPkiTest {
         // Full chain validates cleanly.
         ValidationResult result = CertValidator.of(leaf)
                 .chain(pki.getIntermediateCa(), pki.getRootCa())
+                .trustAnchors(pki.getTrustAnchors())
                 .validate();
         assertThat(result.isValid()).isTrue();
         assertThat(result.isTrusted()).isTrue();

@@ -27,6 +27,7 @@ import java.util.Objects;
  * <pre>{@code
  * ValidationResult result = CertValidator.of(cert)
  *     .chain(intermediate, root)
+ *     .trustAnchors(root)
  *     .validate();
  *
  * if (!result.isValid()) {
@@ -65,17 +66,21 @@ public final class ValidationResult {
         return valid;
     }
 
-    /** {@code true} if at least one certificate in the path is already expired. */
+    /** {@code true} if a non-anchor certificate in the supplied path is already expired. */
     public boolean isExpired() {
         return expired;
     }
 
-    /** {@code true} if at least one certificate in the path is not yet valid. */
+    /** {@code true} if a non-anchor certificate in the supplied path is not yet valid. */
     public boolean isNotYetValid() {
         return notYetValid;
     }
 
-    /** {@code true} if the chain terminates in a trust anchor. */
+    /**
+     * {@code true} if the terminal certificate is an explicitly configured anchor
+     * or its signature links it to one. This alone does not establish a valid
+     * PKIX path: use {@link #isValid()} to decide whether validation succeeded.
+     */
     public boolean isTrusted() {
         return trusted;
     }
@@ -96,9 +101,10 @@ public final class ValidationResult {
     }
 
     /**
-     * The ordered chain of certificates examined during validation. The subject
-     * (leaf) certificate is first; the trust anchor (or the last unverified
-     * certificate) is last.
+     * The supplied ordered chain, with the subject (leaf) certificate first.
+     * A trust anchor is included only if it was supplied in that chain; anchors
+     * configured separately are not appended. An included terminal anchor is
+     * retained here even though PKIX excludes it from certificate checks.
      */
     public List<X509Certificate> getValidationPath() {
         return validationPath;

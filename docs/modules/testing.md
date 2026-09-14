@@ -129,8 +129,18 @@ effective issuer and covering every registered revocation:
 X509CRL crl = pki.getCrl();
 ```
 
-Feed it straight into `CertValidator.crl(...)` to exercise CRL-based
-revocation in your service tests.
+Supply the test PKI's trust anchors separately from its certificate chain:
+
+```java
+ValidationResult result = CertValidator.of(cert)
+    .chain(pki.getChain())
+    .trustAnchors(pki.getTrustAnchors())
+    .crl(pki.getCrl())
+    .validate();
+```
+
+This exercises CRL-based revocation in your service tests. A chain alone,
+including one created by `TestPki`, does not establish trust.
 
 ## In-memory OCSP responder
 
@@ -141,7 +151,11 @@ try (TestOcspResponder ocsp = pki.startOcspResponder()) {
         .ocsp(ocsp.getUrl())         // embed AIA URL
         .build();
 
-    // …exercise code that does CertValidator.of(leaf).ocsp().validate()…
+    ValidationResult result = CertValidator.of(leaf)
+        .chain(pki.getChain())
+        .trustAnchors(pki.getTrustAnchors())
+        .ocsp()
+        .validate();
 }
 ```
 

@@ -17,13 +17,21 @@ package io.github.kaplaukhd.easypki.validation;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalStateException;
+import static org.assertj.core.api.Assertions.assertThatNullPointerException;
 
 import java.security.KeyPair;
 import java.security.KeyStore;
+import java.security.cert.CertPathBuilderException;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 
+import io.github.kaplaukhd.easypki.Curve;
 import io.github.kaplaukhd.easypki.KeyUsage;
 import io.github.kaplaukhd.easypki.PkiCertificate;
 import io.github.kaplaukhd.easypki.PkiKeys;
@@ -131,7 +139,8 @@ class ChainBuilderTest {
                         // no intermediate provided
                         .trustAnchors(root)
                         .build())
-                .withMessageContaining("no issuer found");
+                .withMessageContaining("Unable to build a valid certificate path")
+                .withCauseInstanceOf(CertPathBuilderException.class);
     }
 
     @Test
@@ -155,7 +164,8 @@ class ChainBuilderTest {
                         .intermediates(intermediate)
                         .trustAnchors(otherRoot)
                         .build())
-                .withMessageContaining("no issuer found");
+                .withMessageContaining("Unable to build a valid certificate path")
+                .withCauseInstanceOf(CertPathBuilderException.class);
     }
 
     @Test
@@ -189,6 +199,9 @@ class ChainBuilderTest {
         assertThat(chain.size()).isEqualTo(1);
         assertThat(chain.getLeaf()).isEqualTo(selfCert);
         assertThat(chain.getRoot()).isEqualTo(selfCert);
+        ValidationResult result = chain.validate();
+        assertThat(result.isValid()).isTrue();
+        assertThat(result.isTrusted()).isTrue();
     }
 
     @Test
@@ -239,5 +252,240 @@ class ChainBuilderTest {
 
         // The real intermediate must be chosen — verifies against its key.
         assertThat(chain.getCertificates().get(1)).isEqualTo(intermediate);
+    }
+
+    @Test
+    void crossSignedIntermediateFindsTrustedBranchInEitherPoolOrder() {
+        KeyPair unrelatedKeys = PkiKeys.ec(Curve.P_256);
+        X509Certificate unrelatedRoot = PkiCertificate.selfSigned()
+                .subject("CN=Untrusted Cross Signer")
+                .keyPair(unrelatedKeys)
+                .validFor(Duration.ofDays(365))
+                .isCA(true)
+                .build();
+        X509Certificate deadEnd = PkiCertificate.signed()
+                .subject("CN=Chain Intermediate")
+                .keyPair(intermediateKeys)
+                .issuer(unrelatedRoot, unrelatedKeys.getPrivate())
+                .validFor(Duration.ofDays(100))
+                .pathLength(0)
+                .keyUsage(KeyUsage.KEY_CERT_SIGN)
+                .build();
+
+        assertTrustedBranchForBothOrders(deadEnd);
+    }
+
+    @Test
+    void crossSignedIntermediateSkipsInvalidBranchInEitherPoolOrder() {
+        X509Certificate invalidBranch = PkiCertificate.signed()
+                .subject("CN=Chain Intermediate")
+                .keyPair(intermediateKeys)
+                .issuer(root, rootKeys.getPrivate())
+                .validFor(Duration.ofDays(100))
+                .isCA(true)
+                .keyUsage(KeyUsage.DIGITAL_SIGNATURE)
+                .build();
+
+        assertTrustedBranchForBothOrders(invalidBranch);
+    }
+
+    @Test
+    void explicitlyTrustedIntermediateTerminatesThePathAndValidates() {
+        CertChain chain = ChainBuilder.of(leaf)
+                .intermediates(root)
+                .trustAnchors(intermediate)
+                .build();
+
+        assertThat(chain.getCertificates()).containsExactly(leaf, intermediate);
+        assertThat(chain.getRoot()).isEqualTo(intermediate);
+        ValidationResult result = chain.validate();
+        assertThat(result.getErrors()).isEmpty();
+        assertThat(result.isTrusted()).isTrue();
+    }
+
+    @Test
+    void exactNonSelfSignedTargetAnchorRoundTripsWithoutItsIssuer() {
+        CertChain chain = ChainBuilder.of(intermediate)
+                .trustAnchors(intermediate)
+                .build();
+
+        assertThat(chain.getCertificates()).containsExactly(intermediate);
+        ValidationResult result = chain.validate();
+        assertThat(result.getErrors()).isEmpty();
+        assertThat(result.isTrusted()).isTrue();
+    }
+
+    @Test
+    void selfSignedRootInIntermediatePoolDoesNotBecomeTrusted() {
+        KeyPair otherKeys = PkiKeys.ec(Curve.P_256);
+        X509Certificate otherAnchor = PkiCertificate.selfSigned()
+                .subject("CN=Configured Other Anchor")
+                .keyPair(otherKeys)
+                .validFor(Duration.ofDays(365))
+                .isCA(true)
+                .build();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> ChainBuilder.of(leaf)
+                        .intermediates(intermediate, root)
+                        .trustAnchors(otherAnchor)
+                        .build())
+                .withCauseInstanceOf(CertPathBuilderException.class);
+    }
+
+    @Test
+    void issuerWithoutCertificateSigningUsageIsRejected() {
+        X509Certificate invalidIssuer = PkiCertificate.signed()
+                .subject("CN=Chain Intermediate")
+                .keyPair(intermediateKeys)
+                .issuer(root, rootKeys.getPrivate())
+                .validFor(Duration.ofDays(100))
+                .isCA(true)
+                .keyUsage(KeyUsage.DIGITAL_SIGNATURE)
+                .build();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> ChainBuilder.of(leaf)
+                        .intermediates(invalidIssuer)
+                        .trustAnchors(root)
+                        .build())
+                .withCauseInstanceOf(CertPathBuilderException.class);
+    }
+
+    @Test
+    void intermediatePathLengthConstraintIsEnforced() {
+        KeyPair nestedKeys = PkiKeys.ec(Curve.P_256);
+        X509Certificate nested = PkiCertificate.signed()
+                .subject("CN=Forbidden Nested CA")
+                .keyPair(nestedKeys)
+                .issuer(intermediate, intermediateKeys.getPrivate())
+                .validFor(Duration.ofDays(100))
+                .isCA(true)
+                .keyUsage(KeyUsage.KEY_CERT_SIGN)
+                .build();
+        X509Certificate nestedLeaf = PkiCertificate.signed()
+                .subject("CN=nested.example.org")
+                .keyPair(PkiKeys.ec(Curve.P_256))
+                .issuer(nested, nestedKeys.getPrivate())
+                .validFor(Duration.ofDays(30))
+                .build();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> ChainBuilder.of(nestedLeaf)
+                        .intermediates(nested, intermediate)
+                        .trustAnchors(root)
+                        .build())
+                .withCauseInstanceOf(CertPathBuilderException.class);
+    }
+
+    @Test
+    void expiredIntermediateIsRejectedDuringBuilding() {
+        X509Certificate expired = PkiCertificate.signed()
+                .subject("CN=Chain Intermediate")
+                .keyPair(intermediateKeys)
+                .issuer(root, rootKeys.getPrivate())
+                .validFrom(Instant.now().minus(Duration.ofDays(2)))
+                .validFor(Duration.ofDays(1))
+                .isCA(true)
+                .keyUsage(KeyUsage.KEY_CERT_SIGN)
+                .build();
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> ChainBuilder.of(leaf)
+                        .intermediates(expired)
+                        .trustAnchors(root)
+                        .build())
+                .withCauseInstanceOf(CertPathBuilderException.class);
+    }
+
+    @Test
+    void nineteenIntermediatesRemainSupportedBeyondPkixDefaultDepth() {
+        List<X509Certificate> path = longChain(19);
+        CertChain chain = ChainBuilder.of(path.get(0))
+                .intermediates(path.subList(1, path.size() - 1))
+                .trustAnchors(root)
+                .build();
+
+        assertThat(chain.getCertificates()).containsExactlyElementsOf(path);
+        assertThat(chain.validate().getErrors()).isEmpty();
+    }
+
+    @Test
+    void twentyIntermediatesExceedTheSupportedDepth() {
+        List<X509Certificate> path = longChain(20);
+
+        assertThatIllegalStateException()
+                .isThrownBy(() -> ChainBuilder.of(path.get(0))
+                        .intermediates(path.subList(1, path.size() - 1))
+                        .trustAnchors(root)
+                        .build())
+                .withCauseInstanceOf(CertPathBuilderException.class);
+    }
+
+    @Test
+    void nullInputsAndElementsAreRejectedWhenConfigured() {
+        assertThatNullPointerException().isThrownBy(() -> ChainBuilder.of(null));
+        ChainBuilder builder = ChainBuilder.of(leaf);
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.intermediates((X509Certificate[]) null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.intermediates((Collection<X509Certificate>) null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.intermediates(intermediate, null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.intermediates(Arrays.asList(intermediate, null)));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.trustAnchors((X509Certificate[]) null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.trustAnchors((Collection<X509Certificate>) null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.trustAnchors(root, null));
+        assertThatNullPointerException()
+                .isThrownBy(() -> builder.trustAnchors(Arrays.asList(root, null)));
+        assertThatNullPointerException().isThrownBy(() -> builder.trustStore(null));
+    }
+
+    private void assertTrustedBranchForBothOrders(X509Certificate alternative) {
+        for (List<X509Certificate> pool : List.of(
+                List.of(alternative, intermediate), List.of(intermediate, alternative))) {
+            CertChain chain = ChainBuilder.of(leaf)
+                    .intermediates(pool)
+                    .trustAnchors(root)
+                    .build();
+
+            assertThat(chain.getCertificates()).containsExactly(leaf, intermediate, root);
+            ValidationResult result = chain.validate();
+            assertThat(result.getErrors()).isEmpty();
+            assertThat(result.isTrusted()).isTrue();
+        }
+    }
+
+    private List<X509Certificate> longChain(int intermediateCount) {
+        List<X509Certificate> path = new ArrayList<>();
+        path.add(root);
+        X509Certificate issuer = root;
+        KeyPair issuerKeys = rootKeys;
+        for (int i = 0; i < intermediateCount; i++) {
+            KeyPair keys = PkiKeys.ec(Curve.P_256);
+            X509Certificate ca = PkiCertificate.signed()
+                    .subject("CN=Deep CA " + i)
+                    .keyPair(keys)
+                    .issuer(issuer, issuerKeys.getPrivate())
+                    .validFor(Duration.ofDays(100))
+                    .isCA(true)
+                    .keyUsage(KeyUsage.KEY_CERT_SIGN)
+                    .build();
+            path.add(ca);
+            issuer = ca;
+            issuerKeys = keys;
+        }
+        path.add(PkiCertificate.signed()
+                .subject("CN=deep.example.org")
+                .keyPair(PkiKeys.ec(Curve.P_256))
+                .issuer(issuer, issuerKeys.getPrivate())
+                .validFor(Duration.ofDays(30))
+                .build());
+        Collections.reverse(path);
+        return path;
     }
 }

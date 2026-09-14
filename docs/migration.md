@@ -3,6 +3,45 @@
 Side-by-side recipes for replacing common BouncyCastle patterns with
 `easy-pki`.
 
+## Migrating from earlier easy-pki snapshots
+
+The unreleased validation changes are **breaking behavior changes**. A
+self-signed chain previously accepted without an explicit trust anchor now
+fails with `UNTRUSTED_ROOT`. Configure anchors from application-controlled
+trust material, separately from certificates supplied by a peer:
+
+```java
+ValidationResult result = CertValidator.of(leaf)
+    .chain(peerIntermediates)             // ordered issuer-to-anchor path
+    .trustAnchors(applicationTrustedCa)    // independently configured trust
+    .validate();
+```
+
+Do not migrate by automatically trusting the last certificate received from
+the peer. In tests, use `.trustAnchors(pki.getTrustAnchors())`; the Spring
+facade obtains anchors from its configured trust store or custom bean.
+`ValidationMode.NONE` disables revocation checks, not trust requirements.
+
+`CertValidator` now delegates the ordered path to PKIX. Previously accepted
+paths may be rejected for path length, issuer KeyUsage, name constraints,
+unrecognized critical extensions, algorithm constraints or certificate
+policies. A configured terminal trust anchor is outside the PKIX path:
+its own expiry, self-signature and extensions are not validated. An
+explicitly trusted intermediate can also terminate a path.
+
+`isTrusted()` reports linkage to an explicit anchor; use `isValid()` to
+decide whether all configured checks passed. `getValidationPath()` keeps
+the subject and supplied chain, so it does not append an anchor omitted
+from the input.
+
+Use `ChainBuilder` for an unordered intermediate pool. It now performs PKIX
+path building and can select a valid cross-signed alternative when another
+branch fails. Its `CertChain` includes the selected anchor exactly once and
+preserves that trust for `validate()` and `toValidator()`. Existing CRL/OCSP
+revocation policies, freshness handling and fallback behavior are unchanged
+by this migration. Configured revocation checks run only after the supplied
+path has passed validation.
+
 ## Generate a 2048-bit RSA key pair
 
 === "BouncyCastle"
@@ -240,6 +279,7 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
     // let the validator handle it:
     CertValidator.of(subjectCert)
         .chain(issuer)
+        .trustAnchors(issuer) // issuer explicitly trusted by the application
         .ocsp()
         .validate();
     ```

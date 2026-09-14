@@ -8,37 +8,61 @@ Production-ready chain validation and revocation checking. Built on top of
 ```java
 ValidationResult r = CertValidator.of(leaf)
     .chain(intermediate, root)
+    .trustAnchors(root)     // root configured by the application
     .validate();
 
 r.isValid();            // boolean
 r.isExpired();
 r.isNotYetValid();
-r.isTrusted();
+r.isTrusted();          // linkage to an explicit anchor; not the overall decision
 r.getValidationPath(); // ordered: [leaf, intermediate, root]
 r.getErrors();          // typed ValidationError list
 ```
 
-What the validator checks:
+Configure trust independently of the peer's chain. `trustAnchors(...)` must
+contain certificates approved by the application, such as its configured CA.
+A self-signed certificate or a root supplied only through `chain(...)` does
+not establish trust. With no anchors configured, validation fails with
+`UNTRUSTED_ROOT`.
 
-- `notBefore`/`notAfter` on every certificate in the path (optionally at a
-  historical instant via `.at(Instant)`).
-- Issuer DN / subject DN continuity up the chain.
-- Each parent public key verifies the child's signature.
-- Every cert used as an issuer has `BasicConstraints cA=TRUE`.
-- The chain terminates in a self-signed root **or** in one of the configured
-  `trustAnchors(...)`. Rogue self-signed roots are rejected when explicit
-  anchors are configured.
+`CertValidator` validates the supplied ordered path: the subject certificate,
+then its issuer, and so on toward a configured anchor. It does not reorder
+the input or search alternative intermediates. Use `ChainBuilder` when you
+have an unordered pool or cross-signed alternatives. The validator does not
+truncate a supplied chain at an earlier anchor: when trusting an intermediate,
+end the chain there (or omit that anchor), rather than supplying its root above it.
+
+The PKIX path validator checks certificate validity at the evaluation time,
+issuer names and signatures, CA basic constraints and path length, issuer
+KeyUsage, name constraints, certificate policies, supported critical
+extensions and applicable JCA algorithm constraints. It does not infer a TLS
+hostname or application purpose from this chain-only API.
+
+A trust anchor may be a root or an explicitly trusted intermediate. When
+the supplied chain ends with that anchor, the anchor is removed from the
+PKIX path. Its own expiry, self-signature and extensions are not checked:
+the application has already chosen it as a source of trust. This does not
+skip validation of certificates below the anchor.
+
+`isTrusted()` means that the terminal certificate links to an explicitly
+configured anchor. It may be true even when another PKIX or revocation
+check fails. Use `isValid()` for the overall acceptance decision.
+`getValidationPath()` preserves the subject and supplied chain, including a
+terminal anchor only when it was supplied. An omitted anchor is not appended
+to this result.
 
 ## Time-travel validation
 
 ```java
 CertValidator.of(cert)
     .chain(intermediate, root)
+    .trustAnchors(root)
     .at(Instant.parse("2030-06-01T00:00:00Z"))
     .validate();
 ```
 
-Useful for historical audits and certificate-archive tools.
+This controls the PKIX evaluation time. It does not introduce archival OCSP
+evidence or change the existing CRL/OCSP freshness and fallback behavior.
 
 ## Revocation: CRL
 
@@ -48,6 +72,7 @@ Useful for historical audits and certificate-archive tools.
 X509CRL crl = PkiCrls.fromFile(Path.of("ca.crl"));
 
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .crl(crl)
     .validate();
 ```
@@ -60,6 +85,7 @@ against the issuer's public key, and enforces
 
 ```java
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .crl(c -> c.autoFetch()
                .cache(Duration.ofMinutes(30))
                .timeout(Duration.ofSeconds(10))
@@ -92,6 +118,7 @@ PkiCrls.toFile(crl, Path.of("ca.crl"));
 
 ```java
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .ocsp()    // URL from cert's AIA, 10-second timeout, nonce enabled
     .validate();
 ```
@@ -100,6 +127,7 @@ CertValidator.of(leaf).chain(intermediate, root)
 
 ```java
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .ocsp(o -> o.url("http://ocsp.corp.internal")     // override AIA URL
                 .timeout(Duration.ofSeconds(5))
                 .proxy("http://proxy.corp:3128")
@@ -114,6 +142,7 @@ own AIA extension or skip OCSP.
 
 ```java
 CertValidator.of(leaf).chain(intermediate, root)
+    .trustAnchors(root)
     .ocspWithCrlFallback()                // OCSP preferred, CRL on failure
     .ocsp(o -> o.timeout(Duration.ofSeconds(5)))
     .crl(c -> c.autoFetch())
@@ -136,8 +165,9 @@ one-line convenience that's equivalent to `.ocsp().crl(c -> c.autoFetch())`.
 
 ## Automatic chain building
 
-Given a leaf and a pool of intermediates, `ChainBuilder` finds the path to
-a trust anchor.
+Given a leaf, an unordered pool of intermediates and explicitly configured
+trust, `ChainBuilder` uses the JCA PKIX builder to find a valid path to an
+anchor. The intermediate pool supplies candidates, never trust.
 
 ```java
 CertChain chain = ChainBuilder.of(leaf)
@@ -146,8 +176,8 @@ CertChain chain = ChainBuilder.of(leaf)
     .build();                          // throws if no path exists
 
 chain.getLeaf();
-chain.getRoot();
-chain.getCertificates();  // leaf, ..., root
+chain.getRoot();          // selected anchor, which may be a trusted intermediate
+chain.getCertificates();  // leaf, ..., selected anchor, included once
 
 chain.validate();         // chain-only validation
 chain.toValidator()       // attach revocation
@@ -155,10 +185,16 @@ chain.toValidator()       // attach revocation
     .validate();
 ```
 
-The algorithm walks upward from the leaf, at each step choosing a candidate
-whose subject DN matches *and* whose public key actually verifies the
-current certificate's signature — so impostor certificates with colliding
-DNs are rejected by construction.
+The builder can choose another cross-signed branch when one candidate path
+is invalid. Input order does not determine whether a valid path can be
+found; when several paths are valid, no particular selected path is
+guaranteed. The resulting `CertChain` retains the selected anchor for
+`validate()` and `toValidator()`. Its certificate list includes that anchor
+once, unlike a direct `CertValidator` result whose input omitted the anchor.
+
+PKIX chain validation and construction do not enable the JDK's revocation
+checker. Existing opt-in CRL and OCSP handling remains separate; it runs
+only after the supplied path passes validation.
 
 ## ValidationError codes
 
@@ -169,8 +205,15 @@ DNs are rejected by construction.
 | `ISSUER_MISMATCH` | Issuer/subject DN mismatch in the chain |
 | `BROKEN_SIGNATURE` | Signature does not verify |
 | `NOT_A_CA` | An intermediate lacks `BasicConstraints cA=TRUE` |
-| `UNTRUSTED_ROOT` | Chain does not terminate in a trusted anchor |
+| `UNTRUSTED_ROOT` | No explicit anchor is configured or the chain does not link to one |
 | `INCOMPLETE_CHAIN` | Chain is empty or missing required certificates |
+| `PATH_TOO_LONG` | The path exceeds a CA's basic constraints path length |
+| `INVALID_KEY_USAGE` | A certificate's key usage does not permit its role in the path |
+| `INVALID_NAME` | A certificate violates name constraints |
+| `UNRECOGNIZED_CRITICAL_EXTENSION` | A critical extension cannot be processed |
+| `ALGORITHM_CONSTRAINED` | The JCA algorithm policy rejects a key or signature algorithm |
+| `INVALID_POLICY` | Certificate policy processing failed |
+| `PKIX_VALIDATION_FAILED` | PKIX rejected the path for another reason |
 | `REVOKED` | Reported as revoked by OCSP or CRL |
 | `REVOCATION_UNKNOWN` | Revocation status could not be determined |
 | `OCSP_UNAVAILABLE` | OCSP responder unreachable or returned error |

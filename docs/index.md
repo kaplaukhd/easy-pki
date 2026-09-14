@@ -44,6 +44,7 @@ helpers in the same family of modules.
     ```java
     ValidationResult r = CertValidator.of(leaf)
         .chain(intermediate, root)
+        .trustAnchors(root) // root configured by the application
         .ocspWithCrlFallback()
         .validate();
 

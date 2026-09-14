@@ -74,6 +74,7 @@ X509CRL crl = PkiCrls.fromFile(Path.of("ca.crl"));
 
 ValidationResult r = CertValidator.of(leaf)
     .chain(intermediate, root)
+    .trustAnchors(root) // root configured by the application, not taken from the peer
     .crl(crl)
     .validate();
 ```
@@ -162,6 +163,7 @@ class TlsHandshakeTest {
 
             ValidationResult r = CertValidator.of(revoked)
                 .chain(pki.getIntermediateCa(), pki.getRootCa())
+                .trustAnchors(pki.getTrustAnchors())
                 .ocsp()
                 .validate();
 

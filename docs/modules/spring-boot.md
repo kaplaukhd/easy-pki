@@ -43,6 +43,13 @@ Thread-safe facade around `CertValidator`, pre-wired with trust anchors from
 the configured trust store and the revocation mode from
 `easy-pki.validation.mode`.
 
+Trust must be configured explicitly. Without a trust store or a custom
+`EasyPkiValidator` bean supplying anchors, validation fails even if the peer
+presents a complete chain with a self-signed root. `ValidationMode.NONE`
+disables revocation checking only; it still requires trust and a valid PKIX
+path. The chain passed to `validate(cert, chain...)` must be ordered from
+the certificate's issuer upward and never supplies trust by itself.
+
 ```java
 @Service
 public class TlsService {
@@ -65,6 +72,9 @@ public class TlsService {
     }
 }
 ```
+
+`isTrusted()` reports linkage to an explicit anchor; use `isValid()` for the
+overall decision, including PKIX and any configured revocation checks.
 
 ### `Pkcs12Bundle` qualified beans
 

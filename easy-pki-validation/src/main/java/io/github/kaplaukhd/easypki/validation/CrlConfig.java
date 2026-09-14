@@ -29,6 +29,7 @@ import java.util.Objects;
  * <pre>{@code
  * CertValidator.of(cert)
  *     .chain(intermediate, root)
+ *     .trustAnchors(root) // configured by the application, not taken from the peer
  *     .crl(c -> c.autoFetch()
  *                .cache(Duration.ofMinutes(30))
  *                .timeout(Duration.ofSeconds(10))

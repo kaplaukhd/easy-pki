@@ -17,6 +17,12 @@ package io.github.kaplaukhd.easypki.validation;
 
 import java.net.URI;
 import java.security.GeneralSecurityException;
+import java.security.cert.CertPathValidator;
+import java.security.cert.CertPathValidatorException;
+import java.security.cert.CertificateFactory;
+import java.security.cert.PKIXParameters;
+import java.security.cert.PKIXReason;
+import java.security.cert.TrustAnchor;
 import java.security.cert.X509CRL;
 import java.security.cert.X509CRLEntry;
 import java.security.cert.X509Certificate;
@@ -25,6 +31,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -37,23 +44,31 @@ import io.github.kaplaukhd.easypki.PkiCertInfo;
 /**
  * Fluent certificate validator.
  *
- * <p>Validates a certificate against a provided chain. The chain must
- * terminate either in a self-signed root or in one of the configured
- * {@linkplain #trustAnchors(X509Certificate...) trust anchors}.
+ * <p>Validates a supplied, ordered chain with the JCA PKIX validator against
+ * explicitly configured {@linkplain #trustAnchors(X509Certificate...) trust anchors}.
+ * Supplying a certificate in the chain never establishes trust. Use
+ * {@link ChainBuilder} to select a path from an unordered pool of intermediates.
+ *
+ * <p>A terminal configured anchor is excluded from the internal PKIX path:
+ * its own validity, self-signature and certificate extensions are not checked.
+ * Revocation remains opt-in and is performed only after path validation succeeds.
  *
  * <h2>Simple chain check</h2>
  * <pre>{@code
- * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root).validate();
+ * ValidationResult r = CertValidator.of(leaf).chain(intermediate, root)
+ *     .trustAnchors(root).validate();
  * }</pre>
  *
  * <h2>With CRL-based revocation</h2>
  * <pre>{@code
  * // Static CRLs (off-line):
- * CertValidator.of(leaf).chain(intermediate, root).crl(fetchedCrl).validate();
+ * CertValidator.of(leaf).chain(intermediate, root).trustAnchors(root)
+ *     .crl(fetchedCrl).validate();
  *
  * // HTTP auto-fetch from each cert's CDP extension, with a 30-minute cache:
  * CertValidator.of(leaf)
  *     .chain(intermediate, root)
+ *     .trustAnchors(root)
  *     .crl(c -> c.autoFetch()
  *                .cache(Duration.ofMinutes(30))
  *                .timeout(Duration.ofSeconds(10))
@@ -83,9 +98,10 @@ public final class CertValidator {
     }
 
     /**
-     * Supplies the chain of intermediates and (optionally) the root.
-     * If the root is included and is self-signed, it becomes an implicit
-     * trust anchor. Multiple calls accumulate.
+     * Supplies intermediates and (optionally) the trust anchor in issuer order.
+     * Trust must be configured separately via {@link #trustAnchors(X509Certificate...)}.
+     * The supplied chain is neither reordered nor truncated at an earlier anchor.
+     * Multiple calls accumulate.
      */
     public CertValidator chain(X509Certificate... chain) {
         Objects.requireNonNull(chain, "chain");
@@ -105,20 +121,20 @@ public final class CertValidator {
     }
 
     /**
-     * Registers explicit trust anchors. If the chain does not terminate in a
-     * self-signed root, the last certificate's issuer must be one of the
-     * configured anchors and its signature must verify against that anchor.
+     * Registers explicit trust anchors. The last supplied certificate must be
+     * an anchor or be issued by one. An anchor need not be self-signed.
+     * A directly trusted target is also accepted. Multiple calls accumulate;
+     * null anchors are rejected before any are added.
      */
     public CertValidator trustAnchors(X509Certificate... anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        this.trustAnchors.addAll(Arrays.asList(anchors));
-        return this;
+        return trustAnchors(Arrays.asList(anchors));
     }
 
     /** Overload that accepts a collection. */
     public CertValidator trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        this.trustAnchors.addAll(anchors);
+        this.trustAnchors.addAll(List.copyOf(anchors));
         return this;
     }
 
@@ -201,7 +217,11 @@ public final class CertValidator {
         return this;
     }
 
-    /** Performs validation and returns the outcome. */
+    /**
+     * Performs PKIX path validation and then any configured revocation checks.
+     * Missing explicit trust is reported as {@link ValidationError.Code#UNTRUSTED_ROOT}.
+     * PKIX algorithm constraints follow the host JCA provider and security policy.
+     */
     public ValidationResult validate() {
         Instant now = (evaluationTime != null) ? evaluationTime : Instant.now();
 
@@ -213,8 +233,10 @@ public final class CertValidator {
         boolean expired = false;
         boolean notYetValid = false;
 
-        // Per-cert validity window.
-        for (X509Certificate c : path) {
+        // Retain per-certificate date diagnostics, but exclude an explicit anchor
+        // just as PKIX does. The public path retains the caller's supplied chain.
+        List<X509Certificate> certificatesToValidate = certificatesToValidate(path);
+        for (X509Certificate c : certificatesToValidate) {
             Instant notBefore = c.getNotBefore().toInstant();
             Instant notAfter = c.getNotAfter().toInstant();
             if (now.isBefore(notBefore)) {
@@ -231,36 +253,22 @@ public final class CertValidator {
             }
         }
 
-        // Chain: issuer DN continuity, signatures, intermediate CA flag.
+        // Preserve a precise diagnostic when PKIX reports a generic failure
+        // to reach an anchor for a supplied chain with mismatched issuer names.
         for (int i = 0; i < path.size() - 1; i++) {
             X509Certificate child = path.get(i);
             X509Certificate parent = path.get(i + 1);
-
             if (!child.getIssuerX500Principal().equals(parent.getSubjectX500Principal())) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.ISSUER_MISMATCH,
+                errors.add(new ValidationError(ValidationError.Code.ISSUER_MISMATCH,
                         "Issuer of '" + subject(child) + "' does not match subject of '"
                                 + subject(parent) + "'"));
-            }
-
-            try {
-                child.verify(parent.getPublicKey());
-            } catch (GeneralSecurityException e) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.BROKEN_SIGNATURE,
-                        "Signature of '" + subject(child) + "' does not verify against '"
-                                + subject(parent) + "': " + e.getMessage()));
-            }
-
-            if (parent.getBasicConstraints() < 0) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.NOT_A_CA,
-                        "Certificate '" + subject(parent)
-                                + "' is used as an issuer but lacks BasicConstraints cA=TRUE"));
             }
         }
 
         boolean trusted = determineTrust(path, errors);
+        if (trusted && !certificatesToValidate.isEmpty()) {
+            validatePkix(path, certificatesToValidate, now, errors);
+        }
 
         ValidationResult.Builder builder = ValidationResult.builder()
                 .validationPath(Collections.unmodifiableList(path))
@@ -268,12 +276,84 @@ public final class CertValidator {
                 .notYetValid(notYetValid)
                 .trusted(trusted);
 
-        if (ocspConfig != null || crlConfig != null) {
+        if (errors.isEmpty() && (ocspConfig != null || crlConfig != null)) {
             checkRevocation(path, errors, now, builder);
         }
 
         builder.errors(Collections.unmodifiableList(errors));
         return builder.build();
+    }
+
+    private List<X509Certificate> certificatesToValidate(List<X509Certificate> path) {
+        if (trustAnchors.contains(path.get(path.size() - 1))) {
+            return path.subList(0, path.size() - 1);
+        }
+        return path;
+    }
+
+    private void validatePkix(List<X509Certificate> suppliedPath,
+                              List<X509Certificate> certificatesToValidate,
+                              Instant now, List<ValidationError> errors) {
+        X509Certificate last = suppliedPath.get(suppliedPath.size() - 1);
+        // If the caller included an anchor, bind validation to that exact one.
+        // Otherwise PKIX may select an issuer from the configured anchor set.
+        Collection<X509Certificate> anchors = trustAnchors.contains(last)
+                ? List.of(last) : trustAnchors;
+        Set<TrustAnchor> pkixAnchors = new HashSet<>();
+        for (X509Certificate anchor : anchors) {
+            pkixAnchors.add(new TrustAnchor(anchor, null));
+        }
+        try {
+            PKIXParameters parameters = new PKIXParameters(pkixAnchors);
+            parameters.setDate(Date.from(now));
+            // Revocation is handled by the library's existing opt-in pipeline.
+            parameters.setRevocationEnabled(false);
+            CertPathValidator.getInstance("PKIX").validate(
+                    CertificateFactory.getInstance("X.509").generateCertPath(certificatesToValidate),
+                    parameters);
+        } catch (CertPathValidatorException e) {
+            ValidationError.Code code = pkixErrorCode(e);
+            // Date failures have already been reported individually above.
+            if ((code == ValidationError.Code.EXPIRED || code == ValidationError.Code.NOT_YET_VALID)
+                    && errors.stream().anyMatch(error -> error.code() == code)) {
+                return;
+            }
+            String location = e.getIndex() >= 0 && e.getIndex() < certificatesToValidate.size()
+                    ? "Certificate '" + subject(certificatesToValidate.get(e.getIndex())) + "': "
+                    : "Certificate path: ";
+            errors.add(new ValidationError(code, location + e.getMessage()));
+        } catch (GeneralSecurityException e) {
+            errors.add(new ValidationError(ValidationError.Code.PKIX_VALIDATION_FAILED,
+                    "Unable to validate the PKIX path: " + e.getMessage()));
+        }
+    }
+
+    private static ValidationError.Code pkixErrorCode(CertPathValidatorException exception) {
+        CertPathValidatorException.Reason reason = exception.getReason();
+        if (reason instanceof CertPathValidatorException.BasicReason basic) {
+            return switch (basic) {
+                case EXPIRED -> ValidationError.Code.EXPIRED;
+                case NOT_YET_VALID -> ValidationError.Code.NOT_YET_VALID;
+                case INVALID_SIGNATURE -> ValidationError.Code.BROKEN_SIGNATURE;
+                case ALGORITHM_CONSTRAINED -> ValidationError.Code.ALGORITHM_CONSTRAINED;
+                case REVOKED -> ValidationError.Code.REVOKED;
+                case UNDETERMINED_REVOCATION_STATUS -> ValidationError.Code.REVOCATION_UNKNOWN;
+                case UNSPECIFIED -> ValidationError.Code.PKIX_VALIDATION_FAILED;
+            };
+        }
+        if (reason instanceof PKIXReason pkix) {
+            return switch (pkix) {
+                case NAME_CHAINING -> ValidationError.Code.ISSUER_MISMATCH;
+                case INVALID_KEY_USAGE -> ValidationError.Code.INVALID_KEY_USAGE;
+                case INVALID_POLICY -> ValidationError.Code.INVALID_POLICY;
+                case NO_TRUST_ANCHOR -> ValidationError.Code.UNTRUSTED_ROOT;
+                case UNRECOGNIZED_CRIT_EXT -> ValidationError.Code.UNRECOGNIZED_CRITICAL_EXTENSION;
+                case NOT_CA_CERT -> ValidationError.Code.NOT_A_CA;
+                case PATH_TOO_LONG -> ValidationError.Code.PATH_TOO_LONG;
+                case INVALID_NAME -> ValidationError.Code.INVALID_NAME;
+            };
+        }
+        return ValidationError.Code.PKIX_VALIDATION_FAILED;
     }
 
     private void checkRevocation(List<X509Certificate> path,
@@ -488,33 +568,9 @@ public final class CertValidator {
     }
 
     private boolean determineTrust(List<X509Certificate> path, List<ValidationError> errors) {
-        if (path.isEmpty()) {
-            errors.add(new ValidationError(
-                    ValidationError.Code.INCOMPLETE_CHAIN, "Validation chain is empty"));
-            return false;
-        }
-
         X509Certificate last = path.get(path.size() - 1);
-        boolean selfSigned = last.getSubjectX500Principal().equals(last.getIssuerX500Principal());
-
-        if (selfSigned) {
-            if (trustAnchors.isEmpty() || trustAnchors.contains(last)) {
-                try {
-                    last.verify(last.getPublicKey());
-                    return true;
-                } catch (GeneralSecurityException e) {
-                    errors.add(new ValidationError(
-                            ValidationError.Code.BROKEN_SIGNATURE,
-                            "Root '" + subject(last) + "' self-signature does not verify: "
-                                    + e.getMessage()));
-                    return false;
-                }
-            }
-            errors.add(new ValidationError(
-                    ValidationError.Code.UNTRUSTED_ROOT,
-                    "Self-signed root '" + subject(last)
-                            + "' is not among configured trust anchors"));
-            return false;
+        if (trustAnchors.contains(last)) {
+            return true;
         }
 
         for (X509Certificate anchor : trustAnchors) {
@@ -530,8 +586,10 @@ public final class CertValidator {
 
         errors.add(new ValidationError(
                 ValidationError.Code.UNTRUSTED_ROOT,
-                "Chain does not terminate in a trusted anchor (last cert: '"
-                        + subject(last) + "')"));
+                trustAnchors.isEmpty()
+                        ? "No trust anchors configured; supply trusted certificates via trustAnchors(...)"
+                        : "Chain does not terminate in a configured trust anchor (last cert: '"
+                                + subject(last) + "')"));
         return false;
     }
 

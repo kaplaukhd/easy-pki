@@ -26,6 +26,7 @@ import java.util.Objects;
  * <pre>{@code
  * CertValidator.of(cert)
  *     .chain(intermediate, root)
+ *     .trustAnchors(root) // configured by the application, not taken from the peer
  *     .ocsp(o -> o.url("http://ocsp.corp.internal")
  *                 .timeout(Duration.ofSeconds(5))
  *                 .proxy("http://proxy.corp:3128"))

@@ -24,6 +24,7 @@ import java.util.List;
 
 import io.github.kaplaukhd.easypki.PkiCertificate;
 import io.github.kaplaukhd.easypki.PkiKeys;
+import io.github.kaplaukhd.easypki.validation.ValidationError;
 import io.github.kaplaukhd.easypki.validation.ValidationResult;
 import jakarta.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
@@ -96,6 +97,28 @@ class EasyPkiClientCertFilterTest {
 
         assertThat(resp.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
         assertThat(chain.getRequest()).as("chain not invoked").isNull();
+    }
+
+    @Test
+    void presentedChainCannotSupplyItsOwnTrustAnchor() throws Exception {
+        EasyPkiClientCertFilter filter = new EasyPkiClientCertFilter(validator(null));
+        MockHttpServletRequest req = new MockHttpServletRequest("GET", "/secure");
+        req.setAttribute(EasyPkiClientCertFilter.CLIENT_CERT_ATTRIBUTE,
+                new X509Certificate[]{leaf, root});
+        MockHttpServletResponse resp = new MockHttpServletResponse();
+        MockFilterChain chain = new MockFilterChain();
+
+        filter.doFilter(req, resp, chain);
+
+        assertThat(resp.getStatus()).isEqualTo(HttpServletResponse.SC_UNAUTHORIZED);
+        assertThat(chain.getRequest()).as("untrusted request does not reach the application").isNull();
+        ValidationResult result = (ValidationResult)
+                req.getAttribute(EasyPkiClientCertFilter.ATTRIBUTE_RESULT);
+        assertThat(result).isNotNull();
+        assertThat(result.isValid()).isFalse();
+        assertThat(result.isTrusted()).isFalse();
+        assertThat(result.getErrors()).extracting(ValidationError::code)
+                .contains(ValidationError.Code.UNTRUSTED_ROOT);
     }
 
     @Test

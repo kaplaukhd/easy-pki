@@ -115,6 +115,7 @@ class CertValidatorCrlHttpTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)                   // static for intermediate
                 .crl(c -> c.autoFetch().timeout(Duration.ofSeconds(5)))
                 .validate();
@@ -141,6 +142,7 @@ class CertValidatorCrlHttpTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)
                 .crl(c -> c.autoFetch())
                 .validate();
@@ -165,6 +167,7 @@ class CertValidatorCrlHttpTest {
 
         CertValidator validator = CertValidator.of(leafA)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)
                 .crl(c -> c.autoFetch().cache(Duration.ofMinutes(30)));
 
@@ -187,6 +190,7 @@ class CertValidatorCrlHttpTest {
 
         ValidationResult result = CertValidator.of(leaf)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)
                 .crl(c -> c.autoFetch().timeout(Duration.ofSeconds(2)))
                 .validate();
@@ -217,6 +221,7 @@ class CertValidatorCrlHttpTest {
 
         ValidationResult result = CertValidator.of(bare)
                 .chain(intermediate, root)
+                .trustAnchors(root)
                 .crl(intermediateCrl)
                 .crl(c -> c.autoFetch())
                 .validate();
