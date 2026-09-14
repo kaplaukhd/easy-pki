@@ -20,12 +20,14 @@ import java.security.GeneralSecurityException;
 import java.security.cert.CertPathValidator;
 import java.security.cert.CertPathValidatorException;
 import java.security.cert.CertificateFactory;
+import java.security.cert.PKIXCertPathValidatorResult;
 import java.security.cert.PKIXParameters;
 import java.security.cert.PKIXReason;
 import java.security.cert.TrustAnchor;
 import java.security.cert.X509CRL;
 import java.security.cert.X509CRLEntry;
 import java.security.cert.X509Certificate;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -85,6 +87,7 @@ public final class CertValidator {
     private HttpCrlFetcher httpCrlFetcher;
     private OcspConfig ocspConfig;
     private OcspClient ocspClient;
+    private OcspSettings ocspSettings;
     private Instant evaluationTime;
 
     private CertValidator(X509Certificate certificate) {
@@ -139,8 +142,10 @@ public final class CertValidator {
     }
 
     /**
-     * Sets the instant at which validity is evaluated. Default is now.
-     * Useful for historical or future-dated checks.
+     * Sets the instant used for certificate validity, CRL validity and OCSP
+     * response freshness. Default is the instant at the start of validation.
+     * A current online OCSP answer may be too new for a historical instant;
+     * this method does not retrieve archived revocation evidence.
      */
     public CertValidator at(Instant evaluationTime) {
         this.evaluationTime = Objects.requireNonNull(evaluationTime, "evaluationTime");
@@ -221,6 +226,9 @@ public final class CertValidator {
      * Performs PKIX path validation and then any configured revocation checks.
      * Missing explicit trust is reported as {@link ValidationError.Code#UNTRUSTED_ROOT}.
      * PKIX algorithm constraints follow the host JCA provider and security policy.
+     * Revocation considers every certificate below the selected anchor,
+     * whether or not that anchor was included in {@code chain(...)}. Recovered
+     * source failures appear in {@link ValidationResult#getWarnings()}.
      */
     public ValidationResult validate() {
         Instant now = (evaluationTime != null) ? evaluationTime : Instant.now();
@@ -266,8 +274,10 @@ public final class CertValidator {
         }
 
         boolean trusted = determineTrust(path, errors);
+        X509Certificate selectedAnchor = trustAnchors.contains(path.get(path.size() - 1))
+                ? path.get(path.size() - 1) : null;
         if (trusted && !certificatesToValidate.isEmpty()) {
-            validatePkix(path, certificatesToValidate, now, errors);
+            selectedAnchor = validatePkix(path, certificatesToValidate, now, errors);
         }
 
         ValidationResult.Builder builder = ValidationResult.builder()
@@ -277,7 +287,9 @@ public final class CertValidator {
                 .trusted(trusted);
 
         if (errors.isEmpty() && (ocspConfig != null || crlConfig != null)) {
-            checkRevocation(path, errors, now, builder);
+            List<X509Certificate> revocationPath = new ArrayList<>(certificatesToValidate);
+            revocationPath.add(Objects.requireNonNull(selectedAnchor, "PKIX trust anchor"));
+            checkRevocation(revocationPath, errors, now, builder);
         }
 
         builder.errors(Collections.unmodifiableList(errors));
@@ -291,9 +303,9 @@ public final class CertValidator {
         return path;
     }
 
-    private void validatePkix(List<X509Certificate> suppliedPath,
-                              List<X509Certificate> certificatesToValidate,
-                              Instant now, List<ValidationError> errors) {
+    private X509Certificate validatePkix(List<X509Certificate> suppliedPath,
+                                        List<X509Certificate> certificatesToValidate,
+                                        Instant now, List<ValidationError> errors) {
         X509Certificate last = suppliedPath.get(suppliedPath.size() - 1);
         // If the caller included an anchor, bind validation to that exact one.
         // Otherwise PKIX may select an issuer from the configured anchor set.
@@ -308,15 +320,17 @@ public final class CertValidator {
             parameters.setDate(Date.from(now));
             // Revocation is handled by the library's existing opt-in pipeline.
             parameters.setRevocationEnabled(false);
-            CertPathValidator.getInstance("PKIX").validate(
+            PKIXCertPathValidatorResult result = (PKIXCertPathValidatorResult)
+                    CertPathValidator.getInstance("PKIX").validate(
                     CertificateFactory.getInstance("X.509").generateCertPath(certificatesToValidate),
                     parameters);
+            return result.getTrustAnchor().getTrustedCert();
         } catch (CertPathValidatorException e) {
             ValidationError.Code code = pkixErrorCode(e);
             // Date failures have already been reported individually above.
             if ((code == ValidationError.Code.EXPIRED || code == ValidationError.Code.NOT_YET_VALID)
                     && errors.stream().anyMatch(error -> error.code() == code)) {
-                return;
+                return null;
             }
             String location = e.getIndex() >= 0 && e.getIndex() < certificatesToValidate.size()
                     ? "Certificate '" + subject(certificatesToValidate.get(e.getIndex())) + "': "
@@ -326,6 +340,7 @@ public final class CertValidator {
             errors.add(new ValidationError(ValidationError.Code.PKIX_VALIDATION_FAILED,
                     "Unable to validate the PKIX path: " + e.getMessage()));
         }
+        return null;
     }
 
     private static ValidationError.Code pkixErrorCode(CertPathValidatorException exception) {
@@ -360,18 +375,18 @@ public final class CertValidator {
                                  List<ValidationError> errors,
                                  Instant now,
                                  ValidationResult.Builder builder) {
-
+        List<ValidationError> warnings = new ArrayList<>();
         for (int i = 0; i < path.size() - 1; i++) {
             X509Certificate subject = path.get(i);
             X509Certificate issuer = path.get(i + 1);
-
+            List<ValidationError> attemptFailures = new ArrayList<>();
             boolean determined = false;
 
             // --- OCSP (preferred when configured and applicable) ---
             if (ocspConfig != null) {
                 URI url = resolveOcspUrl(subject, i == 0);
                 if (url != null) {
-                    OcspClient.Outcome outcome = ocspClient().query(url, subject, issuer);
+                    OcspClient.Outcome outcome = ocspClient().query(url, subject, issuer, now);
                     switch (outcome.kind()) {
                         case GOOD -> determined = true;
                         case REVOKED -> {
@@ -384,13 +399,13 @@ public final class CertValidator {
                             }
                             determined = true;
                         }
-                        case UNKNOWN_STATUS -> errors.add(new ValidationError(
+                        case UNKNOWN_STATUS -> attemptFailures.add(new ValidationError(
                                 ValidationError.Code.REVOCATION_UNKNOWN,
                                 "OCSP responder reports unknown status for '"
-                                        + subject(subject) + "'"));
-                        case UNAVAILABLE -> errors.add(new ValidationError(
+                                        + subject(subject) + "' at " + url));
+                        case UNAVAILABLE -> attemptFailures.add(new ValidationError(
                                 ValidationError.Code.OCSP_UNAVAILABLE,
-                                "OCSP check failed for '" + subject(subject) + "': "
+                                "OCSP check failed for '" + subject(subject) + "' at " + url + ": "
                                         + outcome.detail()));
                     }
                 }
@@ -398,12 +413,13 @@ public final class CertValidator {
             }
 
             if (determined) {
+                warnings.addAll(attemptFailures);
                 continue;
             }
 
             // --- CRL fallback ---
             if (crlConfig != null) {
-                X509CRL applicable = findApplicableCrl(subject, issuer, now, errors);
+                X509CRL applicable = findApplicableCrl(subject, issuer, now, attemptFailures, warnings);
                 if (applicable != null) {
                     X509CRLEntry entry = applicable.getRevokedCertificate(subject);
                     if (entry == null) {
@@ -423,16 +439,24 @@ public final class CertValidator {
                 }
             }
 
-            // Only the subject (leaf) is required to be checkable. Intermediates
-            // frequently lack per-cert OCSP URLs or dedicated CRLs and are,
-            // in practice, trusted when no revocation data is available —
-            // matching the behaviour of major browsers.
-            if (!determined && i == 0) {
-                errors.add(new ValidationError(
-                        ValidationError.Code.REVOCATION_UNKNOWN,
-                        "Could not determine revocation status of '" + subject(subject) + "'"));
+            if (determined) {
+                warnings.addAll(attemptFailures);
+            } else {
+                ValidationError unknown = new ValidationError(ValidationError.Code.REVOCATION_UNKNOWN,
+                        "Could not determine revocation status of '" + subject(subject) + "'");
+                if (i == 0 || !attemptFailures.isEmpty()) {
+                    // Recovery is local to this certificate. A successful check
+                    // of a different certificate cannot erase these failures.
+                    errors.addAll(attemptFailures);
+                    errors.add(unknown);
+                } else {
+                    // Preserve the existing intermediate-with-no-source policy,
+                    // but expose that its revocation status was not established.
+                    warnings.add(unknown);
+                }
             }
         }
+        builder.warnings(warnings);
     }
 
     private URI resolveOcspUrl(X509Certificate subject, boolean isSubjectLeaf) {
@@ -457,22 +481,28 @@ public final class CertValidator {
     }
 
     private OcspClient ocspClient() {
-        if (ocspClient == null) {
+        OcspSettings settings = new OcspSettings(ocspConfig.timeout(), ocspConfig.proxy(),
+                ocspConfig.isNonceEnabled(), ocspConfig.clockSkew(), ocspConfig.maxResponseAge());
+        if (ocspClient == null || !settings.equals(ocspSettings)) {
             ocspClient = new OcspClient(
-                    ocspConfig.timeout(),
-                    ocspConfig.proxy(),
-                    ocspConfig.isNonceEnabled());
+                    settings.timeout(), settings.proxy(), settings.nonceEnabled(),
+                    settings.clockSkew(), settings.maxResponseAge());
+            ocspSettings = settings;
         }
         return ocspClient;
     }
 
+    private record OcspSettings(Duration timeout, URI proxy, boolean nonceEnabled,
+                                Duration clockSkew, Duration maxResponseAge) {}
+
     private X509CRL findApplicableCrl(X509Certificate subject,
-                                      X509Certificate issuer,
-                                      Instant now,
-                                      List<ValidationError> errors) {
+                                     X509Certificate issuer,
+                                     Instant now,
+                                     List<ValidationError> errors,
+                                     List<ValidationError> warnings) {
         // 1) Static CRLs supplied by the user.
         for (X509CRL crl : crlConfig.staticCrls()) {
-            if (matchesAndValid(crl, subject, issuer, now, errors)) {
+            if (matchesAndValid(crl, subject, issuer, now, errors, "static CRL", true)) {
                 return crl;
             }
         }
@@ -483,12 +513,14 @@ public final class CertValidator {
                 try {
                     uri = URI.create(rawUrl);
                 } catch (IllegalArgumentException e) {
+                    warnings.add(crlFailure(subject, rawUrl, "Skipped invalid distribution point URI"));
                     continue;
                 }
                 // Only http/https; other schemes (e.g. ldap://) are out of scope.
                 String scheme = uri.getScheme();
                 if (scheme == null
                         || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+                    warnings.add(crlFailure(subject, rawUrl, "Skipped unsupported distribution point scheme"));
                     continue;
                 }
                 Optional<X509CRL> fetched = httpFetcher().fetch(uri);
@@ -499,7 +531,7 @@ public final class CertValidator {
                     continue;
                 }
                 X509CRL crl = fetched.get();
-                if (matchesAndValid(crl, subject, issuer, now, errors)) {
+                if (matchesAndValid(crl, subject, issuer, now, errors, rawUrl, false)) {
                     return crl;
                 }
             }
@@ -511,30 +543,36 @@ public final class CertValidator {
                                     X509Certificate subject,
                                     X509Certificate issuer,
                                     Instant now,
-                                    List<ValidationError> errors) {
+                                    List<ValidationError> errors,
+                                    String source,
+                                    boolean ignoreUnrelatedIssuer) {
         if (!crl.getIssuerX500Principal().equals(subject.getIssuerX500Principal())) {
+            if (!ignoreUnrelatedIssuer) {
+                errors.add(crlFailure(subject, source, "CRL issuer does not match the certificate issuer"));
+            }
             return false;
         }
-        if (crl.getThisUpdate() != null && crl.getThisUpdate().toInstant().isAfter(now)) {
+        if (crl.getThisUpdate() == null || crl.getThisUpdate().toInstant().isAfter(now)) {
+            errors.add(crlFailure(subject, source, "CRL thisUpdate is missing or in the future"));
             return false;
         }
         if (crl.getNextUpdate() != null && crl.getNextUpdate().toInstant().isBefore(now)) {
-            errors.add(new ValidationError(
-                    ValidationError.Code.CRL_UNAVAILABLE,
-                    "CRL for '" + subject(issuer) + "' is expired (nextUpdate="
-                            + crl.getNextUpdate().toInstant() + ")"));
+            errors.add(crlFailure(subject, source, "CRL is expired (nextUpdate="
+                    + crl.getNextUpdate().toInstant() + ")"));
             return false;
         }
         try {
             crl.verify(issuer.getPublicKey());
         } catch (GeneralSecurityException e) {
-            errors.add(new ValidationError(
-                    ValidationError.Code.CRL_UNAVAILABLE,
-                    "CRL signature for '" + subject(issuer) + "' does not verify: "
-                            + e.getMessage()));
+            errors.add(crlFailure(subject, source, "CRL signature does not verify: " + e.getMessage()));
             return false;
         }
         return true;
+    }
+
+    private static ValidationError crlFailure(X509Certificate subject, String source, String detail) {
+        return new ValidationError(ValidationError.Code.CRL_UNAVAILABLE,
+                "CRL check for '" + subject(subject) + "' from " + source + ": " + detail);
     }
 
     private HttpCrlFetcher httpFetcher() {

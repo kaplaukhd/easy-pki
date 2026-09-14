@@ -37,10 +37,36 @@ from the input.
 Use `ChainBuilder` for an unordered intermediate pool. It now performs PKIX
 path building and can select a valid cross-signed alternative when another
 branch fails. Its `CertChain` includes the selected anchor exactly once and
-preserves that trust for `validate()` and `toValidator()`. Existing CRL/OCSP
-revocation policies, freshness handling and fallback behavior are unchanged
-by this migration. Configured revocation checks run only after the supplied
-path has passed validation.
+preserves that trust for `validate()` and `toValidator()`. Configured
+revocation checks run only after the supplied path has passed validation.
+
+Revocation now uses the actual PKIX-selected anchor internally, so omitting
+the anchor from `chain(...)` no longer skips the final leaf or intermediate.
+Trust anchors themselves remain exempt. An intermediate with no source
+retains the existing acceptance policy, now with a warning; exhausted
+attempts and confirmed revocations remain failures.
+
+Failed OCSP/CRL attempts that recover through a definitive fallback move
+from `getErrors()` to `getWarnings()`. Log both lists if you need attempt
+diagnostics, and continue using `isValid()` for the final decision. A failed
+first CRL distribution point no longer cancels a valid later result.
+
+OCSP freshness is checked even when nonce is disabled. The defaults are
+five minutes of clock skew and a 24-hour maximum age without `nextUpdate`,
+configurable through `OcspConfig.clockSkew(...)` and `maxResponseAge(...)`.
+`.at(...)` also controls OCSP freshness; a present-day response is not
+automatically suitable for a historical check. See the
+[validation guide](modules/validation.md) for precise boundary rules.
+
+The Spring starter's filter is now disabled for automatic servlet
+registration. Enable protection by inserting its bean into your
+`SecurityFilterChain`, or explicitly provide its servlet registration.
+The starter now loads every trusted certificate entry from a PKCS#12
+truststore. A private-key entry's identity chain no longer establishes
+trust: import each intended CA as a trusted certificate entry instead.
+An empty or key-only truststore fails configuration clearly. The existing
+key-store loader and custom named trust-store beans keep their contracts.
+See the [Spring guide](modules/spring-boot.md) for examples.
 
 ## Generate a 2048-bit RSA key pair
 

@@ -249,7 +249,7 @@ class EasyPkiAutoConfigurationTest {
     }
 
     @Test
-    void clientCertFilterIsRegisteredWhenSpringWebOnClasspath() {
+    void clientCertFilterBeanIsAvailableWhenSpringWebOnClasspath() {
         contextRunner
                 .withPropertyValues(
                         "easy-pki.trust-store.path=file:" + trustStoreFile.toAbsolutePath(),

@@ -18,20 +18,36 @@ package io.github.kaplaukhd.easypki.spring;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
+import java.security.GeneralSecurityException;
+import java.security.KeyStore;
+import java.security.UnrecoverableKeyException;
+import java.security.cert.Certificate;
+import java.security.cert.X509Certificate;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 import io.github.kaplaukhd.easypki.Pkcs12Bundle;
 import io.github.kaplaukhd.easypki.PkiPkcs12;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.config.BeanDefinition;
+import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
+import org.springframework.beans.factory.config.RuntimeBeanReference;
+import org.springframework.beans.factory.support.BeanDefinitionReaderUtils;
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.RootBeanDefinition;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.ResolvableType;
 import org.springframework.core.io.Resource;
 
 /**
@@ -63,12 +79,19 @@ public class EasyPkiAutoConfiguration {
     /** Qualifier for the auto-loaded key store {@link Pkcs12Bundle} bean. */
     public static final String KEY_STORE_BEAN = "easyPkiKeyStore";
 
+    /**
+     * Loads every trusted X.509 certificate entry, in alias order. This
+     * qualified trust-store bundle exposes the flat anchor list through
+     * {@link Pkcs12Bundle#getChain()}; its primary certificate and alias are
+     * the first trusted entry, and it contains no private key. Private-key
+     * entries and their chains do not establish trust.
+     */
     @Bean(TRUST_STORE_BEAN)
     @Qualifier(TRUST_STORE_BEAN)
     @ConditionalOnProperty(prefix = "easy-pki.trust-store", name = "path")
     @ConditionalOnMissingBean(name = TRUST_STORE_BEAN)
     public Pkcs12Bundle easyPkiTrustStore(EasyPkiProperties properties) {
-        return loadBundle(properties.trustStore(), "trust-store");
+        return loadTrustBundle(properties.trustStore());
     }
 
     @Bean(KEY_STORE_BEAN)
@@ -144,11 +167,12 @@ public class EasyPkiAutoConfiguration {
     }
 
     /**
-     * Registers the {@link EasyPkiClientCertFilter} when the Servlet API and
-     * Spring Security are on the classpath. The filter is NOT automatically
-     * added to the security filter chain — applications opt in by wiring it
-     * into their {@code SecurityFilterChain} (typically before
-     * {@code X509AuthenticationFilter}).
+     * Exposes the {@link EasyPkiClientCertFilter} when the Servlet API and
+     * Spring Web are on the classpath. Servlet registration is disabled by
+     * default, so applications opt in by adding the bean to their
+     * {@code SecurityFilterChain} (typically before
+     * {@code X509AuthenticationFilter}), or by overriding the named servlet
+     * registration bean.
      */
     @Configuration(proxyBeanMethods = false)
     @ConditionalOnClass(name = {
@@ -160,14 +184,120 @@ public class EasyPkiAutoConfiguration {
         /** Qualifier for the auto-registered {@link EasyPkiClientCertFilter} bean. */
         public static final String FILTER_BEAN = "easyPkiClientCertFilter";
 
+        /** Name of the disabled-by-default servlet registration bean. */
+        public static final String FILTER_REGISTRATION_BEAN = "easyPkiClientCertFilterRegistration";
+
         @Bean(FILTER_BEAN)
         @ConditionalOnMissingBean(EasyPkiClientCertFilter.class)
         public EasyPkiClientCertFilter easyPkiClientCertFilter(EasyPkiValidator validator) {
             return new EasyPkiClientCertFilter(validator, false);
         }
+
+        /**
+         * Declares disabled servlet registrations for all client-certificate
+         * filter beans without instantiating them during post-processing.
+         * Explicit application registrations remain effective. The default
+         * filter (or a single custom filter) uses
+         * {@value #FILTER_REGISTRATION_BEAN}, which the application may replace.
+         */
+        @Bean
+        @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
+        public static BeanFactoryPostProcessor easyPkiClientCertFilterRegistrations() {
+            return beanFactory -> {
+                if (!(beanFactory instanceof BeanDefinitionRegistry registry)) {
+                    throw new IllegalStateException(
+                            "Client-certificate filter registration requires a bean definition registry");
+                }
+                String[] filterNames = beanFactory.getBeanNamesForType(
+                        EasyPkiClientCertFilter.class, true, false);
+                Arrays.sort(filterNames);
+                for (String filterName : filterNames) {
+                    String registrationName;
+                    if (filterNames.length == 1 || FILTER_BEAN.equals(filterName)) {
+                        registrationName = FILTER_REGISTRATION_BEAN;
+                        if (beanFactory.containsBean(registrationName)) {
+                            continue;
+                        }
+                    } else {
+                        registrationName = BeanDefinitionReaderUtils.uniqueBeanName(
+                                filterName + ".easyPkiDisabledRegistration", registry);
+                    }
+                    RootBeanDefinition registration = new RootBeanDefinition(FilterRegistrationBean.class);
+                    registration.setTargetType(ResolvableType.forClassWithGenerics(
+                            FilterRegistrationBean.class, EasyPkiClientCertFilter.class));
+                    registration.setRole(BeanDefinition.ROLE_INFRASTRUCTURE);
+                    registration.getPropertyValues()
+                            .add("filter", new RuntimeBeanReference(filterName))
+                            .add("name", filterName)
+                            .add("enabled", false);
+                    registry.registerBeanDefinition(registrationName, registration);
+                }
+            };
+        }
+    }
+
+    private static Pkcs12Bundle loadTrustBundle(EasyPkiProperties.Store store) {
+        Resource path = storeResource(store, "trust-store");
+        String password = store.password() != null ? store.password() : "";
+        char[] passwordChars = password.toCharArray();
+        try (InputStream in = path.getInputStream()) {
+            KeyStore keyStore = KeyStore.getInstance("PKCS12");
+            keyStore.load(in, passwordChars);
+            List<String> aliases = Collections.list(keyStore.aliases());
+            Collections.sort(aliases);
+            List<X509Certificate> anchors = new ArrayList<>();
+            String firstAlias = null;
+            for (String alias : aliases) {
+                if (!keyStore.isCertificateEntry(alias)) {
+                    continue;
+                }
+                Certificate certificate = keyStore.getCertificate(alias);
+                if (!(certificate instanceof X509Certificate anchor)) {
+                    throw new IllegalArgumentException(
+                            "Trusted entry '" + alias + "' is not an X.509 certificate");
+                }
+                if (anchors.isEmpty()) {
+                    firstAlias = alias;
+                }
+                anchors.add(anchor);
+            }
+            if (anchors.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "PKCS#12 trust store contains no trusted X.509 certificate entries");
+            }
+            // Preserve the existing qualified bean type without using the
+            // single-primary-entry loader or serialising this anchor snapshot.
+            return PkiPkcs12.create()
+                    .certificate(anchors.get(0))
+                    .chain(anchors.subList(1, anchors.size()))
+                    .alias(firstAlias)
+                    .password(password)
+                    .build();
+        } catch (IOException e) {
+            if (e.getCause() instanceof UnrecoverableKeyException) {
+                throw new IllegalArgumentException("Wrong PKCS#12 password", e);
+            }
+            throw new UncheckedIOException(
+                    "Failed to read easy-pki.trust-store from " + path, e);
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Failed to read PKCS#12 trust store", e);
+        } finally {
+            Arrays.fill(passwordChars, '\0');
+        }
     }
 
     private static Pkcs12Bundle loadBundle(EasyPkiProperties.Store store, String name) {
+        Resource path = storeResource(store, name);
+        String password = store.password() != null ? store.password() : "";
+        try (InputStream in = path.getInputStream()) {
+            return PkiPkcs12.load(in.readAllBytes(), password);
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Failed to read easy-pki." + name + " from " + path, e);
+        }
+    }
+
+    private static Resource storeResource(EasyPkiProperties.Store store, String name) {
         if (store == null) {
             throw new IllegalStateException(
                     "easy-pki." + name + ".path is set but the store definition is empty");
@@ -182,12 +312,6 @@ public class EasyPkiAutoConfiguration {
                     "Only PKCS12 stores are supported, got " + store.type()
                             + " for easy-pki." + name);
         }
-        String password = store.password() != null ? store.password() : "";
-        try (InputStream in = path.getInputStream()) {
-            return PkiPkcs12.load(in.readAllBytes(), password);
-        } catch (IOException e) {
-            throw new UncheckedIOException(
-                    "Failed to read easy-pki." + name + " from " + path, e);
-        }
+        return path;
     }
 }

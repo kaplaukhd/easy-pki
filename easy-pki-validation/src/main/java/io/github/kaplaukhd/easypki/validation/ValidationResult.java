@@ -48,6 +48,7 @@ public final class ValidationResult {
     private final Instant revocationTime;
     private final List<X509Certificate> validationPath;
     private final List<ValidationError> errors;
+    private final List<ValidationError> warnings;
 
     private ValidationResult(Builder b) {
         this.expired = b.expired;
@@ -58,6 +59,7 @@ public final class ValidationResult {
         this.revocationTime = b.revocationTime;
         this.validationPath = List.copyOf(b.validationPath);
         this.errors = List.copyOf(b.errors);
+        this.warnings = List.copyOf(b.warnings);
         this.valid = errors.isEmpty();
     }
 
@@ -110,9 +112,20 @@ public final class ValidationResult {
         return validationPath;
     }
 
-    /** All errors encountered. Empty if {@link #isValid()} is {@code true}. */
+    /** Final validation failures. Empty if {@link #isValid()} is {@code true}. */
     public List<ValidationError> getErrors() {
         return errors;
+    }
+
+    /**
+     * Nonfatal diagnostics, including failed OCSP/CRL attempts recovered by
+     * a definitive fallback, and unavailable intermediate revocation data
+     * accepted under the existing no-source policy. These do not affect
+     * {@link #isValid()}. The list is immutable; confirmed revocation is
+     * always an error, never a warning.
+     */
+    public List<ValidationError> getWarnings() {
+        return warnings;
     }
 
     static Builder builder() {
@@ -128,6 +141,7 @@ public final class ValidationResult {
         private Instant revocationTime;
         private List<X509Certificate> validationPath = List.of();
         private List<ValidationError> errors = List.of();
+        private List<ValidationError> warnings = List.of();
 
         Builder expired(boolean expired) {
             this.expired = expired;
@@ -162,6 +176,11 @@ public final class ValidationResult {
 
         Builder errors(List<ValidationError> errors) {
             this.errors = Objects.requireNonNull(errors, "errors");
+            return this;
+        }
+
+        Builder warnings(List<ValidationError> warnings) {
+            this.warnings = Objects.requireNonNull(warnings, "warnings");
             return this;
         }
 

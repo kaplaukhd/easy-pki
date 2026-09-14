@@ -17,6 +17,7 @@ r.isNotYetValid();
 r.isTrusted();          // linkage to an explicit anchor; not the overall decision
 r.getValidationPath(); // ordered: [leaf, intermediate, root]
 r.getErrors();          // typed ValidationError list
+r.getWarnings();        // recovered revocation attempts and other nonfatal diagnostics
 ```
 
 Configure trust independently of the peer's chain. `trustAnchors(...)` must
@@ -61,8 +62,10 @@ CertValidator.of(cert)
     .validate();
 ```
 
-This controls the PKIX evaluation time. It does not introduce archival OCSP
-evidence or change the existing CRL/OCSP freshness and fallback behavior.
+This controls certificate validity, CRL validity and OCSP response freshness
+using one evaluation instant. An online responder's current answer may be
+too new for a historical `.at(...)` value; this API does not retrieve archived
+OCSP evidence or infer an earlier GOOD status from a current REVOKED answer.
 
 ## Revocation: CRL
 
@@ -93,9 +96,19 @@ CertValidator.of(leaf).chain(intermediate, root)
     .validate();
 ```
 
-CRLs are fetched from every URL listed in the certificate's CRL Distribution
-Points extension. Only `http://` and `https://` schemes are considered. The
-in-memory cache honours `min(configured-TTL, CRL.nextUpdate)`.
+Static candidates are tried first, followed by the certificate's HTTP(S)
+distribution points when auto-fetch is enabled. An unavailable, malformed,
+expired, future-dated, wrong-issuer or bad-signature downloaded CRL does
+not prevent trying the next point. Once a valid CRL gives a definitive
+answer, lookup stops. A revoked result cannot be overridden by a later
+candidate. Failed attempts include the source in their diagnostics.
+
+The certificate's CRL Distribution Points are tried in order until a
+definitive answer is found. Only `http://` and `https://` schemes are supported.
+Invalid URIs and unsupported schemes such as LDAP are skipped with warnings;
+they do not count as failed attempts to contact a supported source. The
+existing no-source policy for intermediates still applies. The in-memory
+cache honours `min(configured-TTL, CRL.nextUpdate)`.
 
 ### CRL generation
 
@@ -131,12 +144,33 @@ CertValidator.of(leaf).chain(intermediate, root)
     .ocsp(o -> o.url("http://ocsp.corp.internal")     // override AIA URL
                 .timeout(Duration.ofSeconds(5))
                 .proxy("http://proxy.corp:3128")
+                .clockSkew(Duration.ofMinutes(5))
+                .maxResponseAge(Duration.ofHours(24))
                 .nonce(true))                         // RFC 6960 nonce
     .validate();
 ```
 
 The URL override applies **only to the leaf**; intermediates always use their
 own AIA extension or skip OCSP.
+
+Freshness checks run after signature and nonce verification, before the
+status is accepted, and also run when `.nonce(false)` is configured:
+
+- `thisUpdate` and `producedAt` cannot be later than the evaluation instant
+  plus `clockSkew` (default: five minutes; zero is allowed).
+- If present, `nextUpdate` cannot precede `thisUpdate`; the response expires
+  after `nextUpdate + clockSkew`.
+- Without `nextUpdate`, the response expires after
+  `thisUpdate + maxResponseAge + clockSkew`. `maxResponseAge` defaults to
+  24 hours and must be positive. It does not cap a supplied `nextUpdate`.
+- The exact skew/age boundary is accepted. Timestamp comparisons use the
+  instant captured by `validate()`, or the explicitly supplied `.at(...)`.
+
+These configurable allowances are library policy around the freshness
+requirements in [RFC 6960](https://www.rfc-editor.org/rfc/rfc6960.html#section-3.2).
+A failed freshness check is an unavailable OCSP attempt and can use a
+configured CRL fallback. Reconfiguring freshness settings is effective on
+the next validation, including when a retained `OcspConfig` is modified.
 
 ## OCSP with CRL fallback
 
@@ -149,19 +183,35 @@ CertValidator.of(leaf).chain(intermediate, root)
     .validate();
 ```
 
-This is the recommended mode for production: OCSP gives a fresh answer;
-CRL is consulted only if OCSP is unavailable. When both are configured,
+CRL is consulted when OCSP is unavailable or reports UNKNOWN. When both are configured,
 combination happens automatically — `.ocspWithCrlFallback()` is a
 one-line convenience that's equivalent to `.ocsp().crl(c -> c.autoFetch())`.
 
+Attempt failures are local to the certificate being checked. A definitive
+fallback moves earlier failures into the immutable `getWarnings()` list.
+If all attempts fail, their errors and `REVOCATION_UNKNOWN` remain in
+`getErrors()`. A successful check of another certificate cannot clear them.
+Verified REVOKED always remains an error; GOOD/REVOKED are terminal answers
+for that certificate and do not trigger further fallback.
+
 ## Revocation policy
 
-`easy-pki-validation` uses a pragmatic, browser-style policy:
+Revocation remains opt-in and runs only after PKIX path validation succeeds.
+The internal revocation path includes the actual PKIX-selected anchor, even
+if the caller omitted it. All certificates below it are considered; the
+anchor itself, including a directly trusted target, is exempt. This does
+not change the supplied-chain representation in `getValidationPath()`.
 
 - **The leaf** must be checkable. If no revocation source can produce a
   definitive answer, the result gets a `REVOCATION_UNKNOWN` error.
-- **Intermediates** soft-pass when no revocation data is available —
-  matching the behaviour of major browsers.
+- **Intermediates with no available source** retain the existing acceptance
+  policy, with `REVOCATION_UNKNOWN` in `getWarnings()`. Their status has not
+  been established as GOOD.
+- **Failed attempts for any certificate** remain fatal unless a later source
+  establishes its status. Invalid downloaded evidence is not treated as an
+  absent source. Unrelated static CRLs are ignored because a static pool may
+  contain CRLs for several different issuers.
+- **Confirmed revocation** always makes the overall result invalid.
 
 ## Automatic chain building
 

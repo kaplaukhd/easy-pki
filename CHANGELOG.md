@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Complete revocation path:** check every certificate below the
+  PKIX-selected trust anchor, including an omitted terminal anchor's child.
+  The public supplied-chain result is preserved and anchors remain exempt.
+- **OCSP freshness:** enforce `thisUpdate`, `nextUpdate` and
+  `producedAt` bounds at the validation instant, including `.at(...)` and
+  nonce-disabled requests. New `clockSkew(Duration)` (five minutes) and
+  `maxResponseAge(Duration)` (24 hours without `nextUpdate`) settings define
+  the defaults. Changed settings are applied on subsequent validations.
+- **Recoverable revocation attempts:** failed or UNKNOWN OCSP
+  can recover through CRL; invalid/unavailable CRL candidates can recover
+  through later candidates. Recovered attempt diagnostics are available via
+  `ValidationResult.getWarnings()`, separately from final `getErrors()`.
+  Confirmed revocation remains fatal, as do exhausted attempts. The existing
+  intermediate-with-no-source policy remains, now with an explicit warning.
+- **Explicit Spring mTLS protection:** disable automatic servlet
+  registration of the injectable filter. Applications enable it through
+  their security chain or an explicit servlet registration.
+- **Complete Spring truststore loading:** load all PKCS#12 trusted
+  X.509 certificate entries in deterministic alias order. Private-key entries
+  are ignored as trust sources; stores without trusted certificates fail
+  configuration. Existing identity key-store loading remains unchanged.
 - Version bumped to `1.0.0-SNAPSHOT`. Validation contracts are being hardened
   before the upcoming `1.0.0` release.
 - **Breaking — explicit trust:** `CertValidator` requires configured
@@ -22,8 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   those checks; its own expiry, self-signature and extensions are not
   validated. `getValidationPath()` still returns the subject and supplied
   chain without appending an omitted anchor. Configured CRL/OCSP checks
-  run only after the path passes validation; their revocation policies
-  and response handling are unchanged.
+  run only after the path passes validation.
 - **PKIX path building:** `ChainBuilder` searches an unordered
   intermediate pool for a valid path to configured trust, including
   alternative cross-signed branches. The resulting `CertChain` includes the

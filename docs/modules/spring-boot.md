@@ -92,14 +92,32 @@ exposes it as a qualified bean:
 Pkcs12Bundle trustStore;
 ```
 
+The auto-loaded `easyPkiTrustStore` contains **every X.509 trusted certificate
+entry**, ordered by alias. Private-key entries and the certificates in their
+identity chains are ignored; add each intended anchor as a trusted certificate
+entry. An empty store or a store containing only key entries fails startup with
+a message that no trusted X.509 certificate entries were found.
+
+For compatibility, this qualified trust-store bean remains a `Pkcs12Bundle`:
+`getCertificate()` and `getAlias()` identify the first trusted entry,
+`getPrivateKey()` returns `null`, and `getChain()` returns the complete, flat
+list of anchors. In this trust-store snapshot, that list can contain unrelated
+roots and is not an issuer chain. The validator, monitor and health indicator
+all consume the complete list. The `easyPkiKeyStore` bean retains its existing
+primary certificate, private key and ordered chain behavior.
+
+Keep the original truststore file when preserving its aliases or exporting it;
+this loading behavior does not change `Pkcs12Bundle`'s existing single-entry
+trust-only export behavior.
+
 ## Certificate expiry monitoring
 
 Activate with `easy-pki.monitoring.enabled=true`. The starter registers
 a `CertificateMonitor` that runs on its own daemon
 `ScheduledExecutorService` — **no `@EnableScheduling` required**.
 
-By default it monitors every certificate in the trust-store and key-store
-chains. You can register additional certificates programmatically.
+By default it monitors every configured trust anchor and every certificate in
+the key-store chain. You can register additional certificates programmatically.
 
 ```java
 @Component
@@ -168,10 +186,11 @@ certificate turns the whole component `DOWN`.
 
 ## mTLS filter
 
-When `spring-security-web` is on the classpath, the starter registers an
-`EasyPkiClientCertFilter` bean named `easyPkiClientCertFilter`. It's **not
-added to the chain automatically** — wire it in explicitly, typically
-before Spring Security's `X509AuthenticationFilter`.
+When the Servlet API and Spring Web are on the classpath, the starter exposes
+an `EasyPkiClientCertFilter` bean named `easyPkiClientCertFilter`. Its servlet
+registration is **disabled by default**, so adding the starter does not reject
+ordinary HTTP requests. To protect Spring Security routes, add the bean to
+your `SecurityFilterChain`, typically before `X509AuthenticationFilter`.
 
 ```java
 @Configuration
@@ -201,10 +220,35 @@ The filter:
 An optional mode (`new EasyPkiClientCertFilter(validator, true)`) passes
 through requests without a client certificate instead of rejecting them.
 
+For servlet applications that want container-level protection, explicitly
+replace the named registration bean and choose the protected routes:
+
+```java
+@Bean(EasyPkiAutoConfiguration.SecurityConfiguration.FILTER_REGISTRATION_BEAN)
+FilterRegistrationBean<EasyPkiClientCertFilter> clientCertificateRegistration(
+        EasyPkiClientCertFilter filter) {
+    FilterRegistrationBean<EasyPkiClientCertFilter> registration =
+        new FilterRegistrationBean<>(filter);
+    registration.addUrlPatterns("/protected/*");
+    registration.setEnabled(true);
+    return registration;
+}
+```
+
+Choose either Spring Security insertion or servlet registration for a given
+filter. Every bean declared as an `EasyPkiClientCertFilter`, including multiple
+custom filters and filters marked `@Primary`, is excluded from automatic
+servlet registration. Explicit application `FilterRegistrationBean`s retain
+their enabled state and route mappings. With multiple filters, use a qualifier
+when selecting the filter for a security chain or an explicit registration.
+
 ## Overriding beans
 
-Every auto-configured bean uses `@ConditionalOnMissingBean`, so defining
-your own with the same type wins:
+The validator, filter and monitor back off when an application supplies its own
+bean of the same type. Qualified store beans and the filter registration back
+off by their documented bean names. A custom `easyPkiTrustStore` bundle supplies
+its `getChain()` unchanged to the validator, monitor and health indicator, even
+when `easy-pki.trust-store.path` is also configured.
 
 ```java
 @Bean

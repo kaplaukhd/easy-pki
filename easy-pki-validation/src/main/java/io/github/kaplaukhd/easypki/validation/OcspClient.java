@@ -55,9 +55,12 @@ final class OcspClient {
     private final HttpClient client;
     private final Duration timeout;
     private final boolean nonceEnabled;
+    private final Duration clockSkew;
+    private final Duration maxResponseAge;
     private final SecureRandom random = new SecureRandom();
 
-    OcspClient(Duration timeout, URI proxy, boolean nonceEnabled) {
+    OcspClient(Duration timeout, URI proxy, boolean nonceEnabled,
+               Duration clockSkew, Duration maxResponseAge) {
         HttpClient.Builder builder = HttpClient.newBuilder()
                 .connectTimeout(timeout);
         if (proxy != null) {
@@ -67,14 +70,18 @@ final class OcspClient {
         this.client = builder.build();
         this.timeout = timeout;
         this.nonceEnabled = nonceEnabled;
+        this.clockSkew = clockSkew;
+        this.maxResponseAge = maxResponseAge;
     }
 
     /**
      * Sends an OCSP request for the given subject certificate to the responder
-     * and returns the parsed outcome. Any networking, parsing or signature
-     * failure yields {@link Outcome#unavailable(String)}.
+     * and returns the parsed outcome. Any networking, parsing, signature
+     * or freshness failure yields {@link Outcome#unavailable(String)}. All
+     * response times are evaluated against the caller's validation instant.
      */
-    Outcome query(URI responderUrl, X509Certificate subject, X509Certificate issuer) {
+    Outcome query(URI responderUrl, X509Certificate subject, X509Certificate issuer,
+                  Instant evaluationTime) {
         byte[] sentNonce = null;
         byte[] requestBytes;
         CertificateID certId;
@@ -124,13 +131,14 @@ final class OcspClient {
             return Outcome.unavailable("OCSP HTTP request failed: " + e.getMessage());
         }
 
-        return parse(responseBytes, certId, issuer, sentNonce);
+        return parse(responseBytes, certId, issuer, sentNonce, evaluationTime);
     }
 
-    private static Outcome parse(byte[] responseBytes,
-                                 CertificateID certId,
-                                 X509Certificate issuer,
-                                 byte[] sentNonce) {
+    private Outcome parse(byte[] responseBytes,
+                          CertificateID certId,
+                          X509Certificate issuer,
+                          byte[] sentNonce,
+                          Instant evaluationTime) {
         try {
             OCSPResp ocspResp = new OCSPResp(responseBytes);
             if (ocspResp.getStatus() != OCSPResp.SUCCESSFUL) {
@@ -166,6 +174,10 @@ final class OcspClient {
                 if (!single.getCertID().equals(certId)) {
                     continue;
                 }
+                String freshnessFailure = freshnessFailure(single, basic, evaluationTime);
+                if (freshnessFailure != null) {
+                    return Outcome.unavailable(freshnessFailure);
+                }
                 CertificateStatus status = single.getCertStatus();
                 if (status == CertificateStatus.GOOD) {
                     return Outcome.good();
@@ -187,6 +199,41 @@ final class OcspClient {
         } catch (Exception e) {
             return Outcome.unavailable("Failed to parse OCSP response: " + e.getMessage());
         }
+    }
+
+    private String freshnessFailure(SingleResp single, BasicOCSPResp basic,
+                                    Instant evaluationTime) {
+        Instant thisUpdate = single.getThisUpdate().toInstant();
+        Instant producedAt = basic.getProducedAt().toInstant();
+        if (exceedsClockSkew(thisUpdate, evaluationTime)) {
+            return "OCSP thisUpdate is in the future: " + thisUpdate;
+        }
+        if (exceedsClockSkew(producedAt, evaluationTime)) {
+            return "OCSP producedAt is in the future: " + producedAt;
+        }
+
+        if (single.getNextUpdate() != null) {
+            Instant nextUpdate = single.getNextUpdate().toInstant();
+            if (nextUpdate.isBefore(thisUpdate)) {
+                return "OCSP nextUpdate precedes thisUpdate";
+            }
+            if (exceedsClockSkew(evaluationTime, nextUpdate)) {
+                return "OCSP response expired at nextUpdate: " + nextUpdate;
+            }
+        } else {
+            Duration age = Duration.between(thisUpdate, evaluationTime);
+            // Subtract only after comparing, so even very large configured
+            // durations cannot overflow an Instant or a sum of durations.
+            if (age.compareTo(maxResponseAge) > 0
+                    && age.minus(maxResponseAge).compareTo(clockSkew) > 0) {
+                return "OCSP response without nextUpdate exceeds maxResponseAge: " + thisUpdate;
+            }
+        }
+        return null;
+    }
+
+    private boolean exceedsClockSkew(Instant value, Instant reference) {
+        return Duration.between(reference, value).compareTo(clockSkew) > 0;
     }
 
     /** Opaque outcome of an OCSP query. */

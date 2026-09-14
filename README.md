@@ -259,6 +259,7 @@ r.isValid();            // boolean
 r.isTrusted();          // linkage to an explicit anchor; not the full validation result
 r.getValidationPath();  // ordered: [leaf, intermediate, root]
 r.getErrors();          // typed ValidationError list
+r.getWarnings();        // nonfatal diagnostics from recovered revocation attempts
 ```
 
 Trust anchors must come from application configuration, separately from the
@@ -299,6 +300,18 @@ CertValidator.of(leaf).chain(intermediate, root)
     .crl(c -> c.autoFetch())
     .validate();
 ```
+
+Revocation checks cover every certificate below the selected trust anchor,
+including when the anchor was omitted from `chain(...)`. A failed OCSP
+attempt or unusable CRL candidate can recover through a valid fallback;
+recovered failures appear in `getWarnings()`, while `getErrors()` contains
+final failures. Confirmed revocation always rejects the path.
+
+OCSP timestamps are checked even with nonce disabled. Defaults allow five
+minutes of clock skew and, without `nextUpdate`, 24 hours of response age.
+Use `.ocsp(o -> o.clockSkew(...).maxResponseAge(...))` to configure these
+limits. See the [revocation policy](docs/modules/validation.md#revocation-policy)
+for the existing treatment of intermediates without revocation sources.
 
 ### Automatic chain building
 
@@ -396,6 +409,13 @@ public class SecurityConfig {
 
 The `/actuator/health` endpoint gains a `pki` component with per-certificate
 details (subject, `notAfter`, `daysLeft`, `OK`/`EXPIRING`/`EXPIRED`).
+
+The starter's mTLS filter has servlet auto-registration disabled. Add it to
+your `SecurityFilterChain` as above to enable protection. PKCS#12 trust
+loading uses every trusted certificate entry; private-key entries are
+identity material and do not become trust anchors. See the
+[Spring module guide](docs/modules/spring-boot.md) for explicit servlet
+registration and truststore migration details.
 
 ---
 

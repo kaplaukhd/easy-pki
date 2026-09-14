@@ -257,7 +257,10 @@ class CertValidatorOcspTest {
         // OCSP failed, CRL took over: leaf is revoked.
         assertThat(result.isRevoked()).isTrue();
         assertThat(result.getRevokeReason()).isEqualTo(RevocationReason.CESSATION_OF_OPERATION);
-        assertThat(result.getErrors())
+        assertThat(result.isValid()).isFalse();
+        assertThat(result.getErrors()).extracting(ValidationError::code)
+                .containsExactly(ValidationError.Code.REVOKED);
+        assertThat(result.getWarnings())
                 .anySatisfy(e -> assertThat(e.code())
                         .isEqualTo(ValidationError.Code.OCSP_UNAVAILABLE));
     }
