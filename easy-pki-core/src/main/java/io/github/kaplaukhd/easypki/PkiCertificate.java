@@ -39,6 +39,8 @@ public final class PkiCertificate {
     /**
      * Starts a new self-signed certificate builder. The same key pair is used
      * both as the certificate's public key and to sign the resulting certificate.
+     * Alternatively, supply a public key and external {@link PkiSigner} via
+     * {@link SelfSignedCertificateBuilder#signer(java.security.PublicKey, PkiSigner)}.
      */
     public static SelfSignedCertificateBuilder selfSigned() {
         return new SelfSignedCertificateBuilder();
@@ -49,6 +51,8 @@ public final class PkiCertificate {
      * certificate and its private key are supplied via
      * {@link SignedCertificateBuilder#issuer(java.security.cert.X509Certificate,
      * java.security.PrivateKey)}.
+     * An external signing operation can be supplied through
+     * {@link SignedCertificateBuilder#issuer(java.security.cert.X509Certificate, PkiSigner)}.
      */
     public static SignedCertificateBuilder signed() {
         return new SignedCertificateBuilder();

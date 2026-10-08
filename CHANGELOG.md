@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Certificate signing contract:** add `PkiSigner` with JCA adapters
+  using default provider selection, a registered provider name, or an explicit
+  provider instance. Both certificate builders use the contract; existing
+  private-key APIs retain their defaults and named algorithm overrides.
+  Self-signed certificates accept `signer(publicKey, signer)`, and issued
+  certificates accept `issuer(certificate, signer)`. Explicit signer algorithms
+  cannot be overridden on the builder. Signing requires no private-key export
+  or global provider registration; backend failures preserve their cause.
 - **JCA-compatible distinguished names:** string and fluent subject
   input now share JCA display/RDN order and correct literal escaping. Both
   certificate builders accept `X500Principal` without changing its DER.

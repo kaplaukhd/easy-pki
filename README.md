@@ -504,6 +504,7 @@ class MyServiceTest {
 | Key generation | `PkiKeys.rsa(int)` · `PkiKeys.ec(Curve)` (P-256 / P-384 / P-521) |
 | Self-signed certs | `PkiCertificate.selfSigned()...build()` |
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
+| Signing backend | `PkiSigner` — JCA provider selection or external signing, without exporting private keys |
 | Subject DN | JCA RFC 2253/4514 order; `String`, `X500Principal` or literal `DnBuilder` values |
 | Validity | `validFor(Duration)` · `validFrom(Instant)` · `validUntil(Instant)` |
 | Serial | random positive nonzero, at most 159 bits / 20 DER value octets · validated `serialNumber(BigInteger)` override |

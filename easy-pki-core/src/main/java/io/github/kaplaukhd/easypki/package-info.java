@@ -21,6 +21,7 @@
  * <ul>
  *   <li>{@code PkiKeys} — RSA and EC key pair generation</li>
  *   <li>{@code PkiCertificate} — fluent builders for self-signed and signed certificates</li>
+ *   <li>{@code PkiSigner} — certificate signing with JCA providers or external backends</li>
  *   <li>{@code PkiCertificates} / {@code PkiPrivateKeys} — PEM/DER I/O</li>
  *   <li>{@code PkiPkcs12} — PKCS#12 keystore creation and loading</li>
  *   <li>{@code PkiCertInfo} — certificate inspection</li>

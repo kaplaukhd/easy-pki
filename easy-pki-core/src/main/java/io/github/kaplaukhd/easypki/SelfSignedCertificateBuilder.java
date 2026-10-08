@@ -38,14 +38,13 @@ import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 /**
  * Fluent builder for self-signed X.509 certificates.
  *
  * <p>Obtain an instance via {@link PkiCertificate#selfSigned()}. The same key
- * pair is used both as the certificate's public key and to sign it. Typical use:
+ * pair is used both as the certificate's public key and to sign it, or use
+ * {@link #signer(PublicKey, PkiSigner)} with an external signer. Typical use:
  *
  * <pre>{@code
  * X509Certificate cert = PkiCertificate.selfSigned()
@@ -70,6 +69,8 @@ public final class SelfSignedCertificateBuilder {
 
     private X500Name subject;
     private KeyPair keyPair;
+    private PublicKey signerPublicKey;
+    private PkiSigner pkiSigner;
 
     private Instant notBefore;
     private Instant notAfter;
@@ -121,9 +122,27 @@ public final class SelfSignedCertificateBuilder {
     /**
      * Sets the key pair whose public key becomes the certificate's subject
      * public key and whose private key is used to sign the certificate.
+     * Replaces an explicit signer; the private-key path uses the JCA PkiSigner adapter.
      */
     public SelfSignedCertificateBuilder keyPair(KeyPair keyPair) {
         this.keyPair = Objects.requireNonNull(keyPair, "keyPair");
+        this.signerPublicKey = null;
+        this.pkiSigner = null;
+        return this;
+    }
+
+    /**
+     * Uses a public key and an external signing operation, without a private key.
+     * The signer must sign with the matching private key. Replaces keyPair(...).
+     * The algorithm is owned by the signer; signatureAlgorithm(...) cannot be combined with it.
+     */
+    public SelfSignedCertificateBuilder signer(PublicKey publicKey, PkiSigner signer) {
+        Objects.requireNonNull(publicKey, "publicKey");
+        Objects.requireNonNull(signer, "signer");
+        requireState(signatureAlgorithm == null, "Configure the signature algorithm on PkiSigner, not the builder");
+        this.signerPublicKey = publicKey;
+        this.pkiSigner = signer;
+        this.keyPair = null;
         return this;
     }
 
@@ -178,9 +197,11 @@ public final class SelfSignedCertificateBuilder {
      * Overrides the JCA signature algorithm name (e.g. {@code "SHA384withRSA"}).
      * By default the algorithm is derived from the key type: RSA keys use
      * {@code SHA256withRSA}, EC keys use {@code SHA256withECDSA}.
+     * Applies only to keyPair(...); configure explicit PkiSigner algorithms on the signer.
      */
     public SelfSignedCertificateBuilder signatureAlgorithm(String algorithm) {
         Objects.requireNonNull(algorithm, "algorithm");
+        requireState(pkiSigner == null, "Configure the signature algorithm on PkiSigner, not the builder");
         this.signatureAlgorithm = algorithm;
         return this;
     }
@@ -227,7 +248,7 @@ public final class SelfSignedCertificateBuilder {
      */
     public X509Certificate build() {
         requireState(subject != null, "subject is required");
-        requireState(keyPair != null, "keyPair is required");
+        requireState(keyPair != null || pkiSigner != null, "keyPair or signer(publicKey, signer) is required");
         requireState(validFor != null || notAfter != null,
                 "either validFor(Duration) or validUntil(Instant) is required");
 
@@ -245,11 +266,10 @@ public final class SelfSignedCertificateBuilder {
         BigInteger resolvedSerial = (serialNumber != null)
                 ? serialNumber
                 : CertificateBuildSupport.randomSerial();
-        String resolvedSigAlg = (signatureAlgorithm != null)
-                ? signatureAlgorithm
-                : CertificateBuildSupport.defaultSignatureAlgorithm(keyPair.getPrivate());
-
-        PublicKey publicKey = keyPair.getPublic();
+        PkiSigner resolvedSigner = pkiSigner != null ? pkiSigner : PkiSigner.jca(keyPair.getPrivate(),
+                signatureAlgorithm != null ? signatureAlgorithm
+                        : CertificateBuildSupport.defaultSignatureAlgorithm(keyPair.getPrivate()));
+        PublicKey publicKey = pkiSigner != null ? signerPublicKey : keyPair.getPublic();
 
         X509v3CertificateBuilder certBuilder = new X509v3CertificateBuilder(
                 subject,
@@ -261,11 +281,10 @@ public final class SelfSignedCertificateBuilder {
 
         try {
             addExtensions(certBuilder, publicKey);
-            ContentSigner signer = new JcaContentSignerBuilder(resolvedSigAlg)
-                    .build(keyPair.getPrivate());
+            ContentSigner signer = PkiSignerSupport.contentSigner(resolvedSigner);
             X509CertificateHolder holder = certBuilder.build(signer);
             return CertificateBuildSupport.toX509Certificate(holder);
-        } catch (GeneralSecurityException | OperatorCreationException | java.io.IOException e) {
+        } catch (GeneralSecurityException | java.io.IOException e) {
             throw new IllegalStateException("Failed to build self-signed certificate", e);
         }
     }

@@ -45,6 +45,72 @@ X509Certificate leaf = PkiCertificate.signed()
     .build();
 ```
 
+## Signing without exporting private keys
+
+Both certificate builders use `PkiSigner`. The existing `.keyPair(...)` and
+`.issuer(certificate, privateKey)` paths remain convenience adapters with the
+same RSA/EC defaults and named algorithm overrides.
+
+For an opaque JCA key handle, choose its provider explicitly:
+
+```java
+PkiSigner signer = PkiSigner.jca(issuerKeyHandle, "SHA256withRSA", provider);
+
+X509Certificate leaf = PkiCertificate.signed()
+    .subject("CN=service")
+    .publicKey(servicePublicKey)
+    .issuer(issuerCertificate, signer)
+    .validFor(Duration.ofDays(30))
+    .build();
+
+X509Certificate root = PkiCertificate.selfSigned()
+    .subject("CN=Root CA")
+    .signer(issuerPublicKey, signer)
+    .isCA(true)
+    .validFor(Duration.ofDays(3650))
+    .build();
+```
+
+`provider` can be an unregistered `java.security.Provider` instance, or use
+the overload accepting a registered provider's name. Name lookup captures
+the instance once. Explicit selection never falls back to another provider
+or changes the global provider list. Without a provider argument, normal JCA
+selection applies. Each JCA adapter call creates independent signing state;
+the application retains ownership of its key handle and provider resources.
+
+A backend that does not expose a Java `PrivateKey` can implement the contract:
+
+```java
+PkiSigner signer = new PkiSigner() {
+    public String signatureAlgorithm() { return "SHA256withRSA"; }
+    public byte[] sign(byte[] content) throws GeneralSecurityException {
+        return signingService.signSha256WithRsa(keyId, content);
+    }
+};
+```
+
+The backend receives the **complete DER TBSCertificate**, not a digest; it
+performs the declared hashing/signing operation and returns the X.509 signature
+bytes. ECDSA must return DER `(r, s)`, not raw `r || s`; do not return a CMS
+wrapper. The name must have an X.509 algorithm mapping in the bundled BC version,
+and the backend must use those parameters and the key corresponding to the
+supplied public key/issuer certificate. The public key must be encodable as
+SubjectPublicKeyInfo. The contract requires no private-key encoding or BC types.
+
+Configure the algorithm on an explicit signer. Combining it with the builder's
+`signatureAlgorithm(...)` is rejected in either order. Replacing `keyPair(...)`
+with `signer(...)`, or one `issuer(...)` overload with the other, replaces the
+previous signing source. Each build gets a fresh TBS buffer; the JCA adapter
+also creates a fresh signature operation. Custom implementations define their
+own concurrency/resource policy; builders
+do not close backends or destroy keys. Checked signing failures retain their
+cause in an `IllegalStateException`, and null/empty signatures are rejected.
+
+Tests use an opaque key whose `getEncoded()` throws, serviced by a local test
+provider. This checks the no-export path without claiming integration with a
+physical HSM. Configurable algorithm parameters, new key-generation helpers
+and CRL signer integration are outside this certificate-signing change.
+
 ## Subject DN
 
 === "RFC 4514 string"

@@ -5,6 +5,22 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### Certificate signing operations
+
+Both certificate builders now sign through `PkiSigner`. Existing `keyPair(...)`,
+`issuer(certificate, privateKey)`, defaults and named algorithm overrides remain
+available. To use an explicit JCA provider, pass
+`issuer(certificate, PkiSigner.jca(keyHandle, algorithm, provider))`; for
+self-signed certificates use `signer(publicKey, signer)`. Applications can also
+implement `PkiSigner` without holding a Java private-key object.
+
+An explicit signer owns its algorithm, so do not combine it with a builder
+`signatureAlgorithm(...)` override. A provider instance need not be globally
+registered; a provider-name overload resolves an existing instance once. No
+provider is registered automatically and explicit selection has no fallback.
+See the [signer contract](modules/core.md#signing-without-exporting-private-keys)
+for message format, key correspondence, errors and lifecycle expectations.
+
 ### DN, certificate identity, encrypted PEM and CRL support
 
 `subject(String)` now uses `X500Principal` parsing and ordering. For example,

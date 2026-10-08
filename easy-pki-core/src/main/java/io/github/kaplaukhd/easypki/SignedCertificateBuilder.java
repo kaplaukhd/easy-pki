@@ -49,8 +49,6 @@ import org.bouncycastle.cert.X509CertificateHolder;
 import org.bouncycastle.cert.X509v3CertificateBuilder;
 import org.bouncycastle.cert.jcajce.JcaX509ExtensionUtils;
 import org.bouncycastle.operator.ContentSigner;
-import org.bouncycastle.operator.OperatorCreationException;
-import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
 
 /**
  * Fluent builder for X.509 certificates signed by an issuing CA.
@@ -90,6 +88,7 @@ public final class SignedCertificateBuilder {
     private PublicKey subjectPublicKey;
     private X509Certificate issuerCertificate;
     private PrivateKey issuerPrivateKey;
+    private PkiSigner pkiSigner;
 
     private Instant notBefore;
     private Instant notAfter;
@@ -155,12 +154,31 @@ public final class SignedCertificateBuilder {
     /**
      * Sets the issuing CA — its subject DN becomes the new certificate's issuer,
      * its public key is used to derive the Authority Key Identifier, and its
-     * private key signs the new certificate.
+     * private key signs the new certificate through the JCA PkiSigner adapter.
+     * Replaces an explicit signer.
      */
     public SignedCertificateBuilder issuer(X509Certificate issuerCertificate,
                                            PrivateKey issuerPrivateKey) {
-        this.issuerCertificate = Objects.requireNonNull(issuerCertificate, "issuerCertificate");
-        this.issuerPrivateKey = Objects.requireNonNull(issuerPrivateKey, "issuerPrivateKey");
+        Objects.requireNonNull(issuerCertificate, "issuerCertificate");
+        Objects.requireNonNull(issuerPrivateKey, "issuerPrivateKey");
+        this.issuerCertificate = issuerCertificate;
+        this.issuerPrivateKey = issuerPrivateKey;
+        this.pkiSigner = null;
+        return this;
+    }
+
+    /**
+     * Sets the issuing certificate and an operation signing with its corresponding
+     * key, without requiring a PrivateKey object. Replaces the private-key issuer
+     * path. Configure the algorithm on the signer, not via signatureAlgorithm(...).
+     */
+    public SignedCertificateBuilder issuer(X509Certificate issuerCertificate, PkiSigner signer) {
+        Objects.requireNonNull(issuerCertificate, "issuerCertificate");
+        Objects.requireNonNull(signer, "signer");
+        requireState(signatureAlgorithm == null, "Configure the signature algorithm on PkiSigner, not the builder");
+        this.issuerCertificate = issuerCertificate;
+        this.pkiSigner = signer;
+        this.issuerPrivateKey = null;
         return this;
     }
 
@@ -208,10 +226,13 @@ public final class SignedCertificateBuilder {
 
     /**
      * Overrides the JCA signature algorithm name. By default the algorithm is
-     * derived from the <em>issuer's</em> private key type.
+     * derived from the <em>issuer's</em> private key type. Applies only to the
+     * private-key issuer overload; explicit signers own their algorithms.
      */
     public SignedCertificateBuilder signatureAlgorithm(String algorithm) {
-        this.signatureAlgorithm = Objects.requireNonNull(algorithm, "algorithm");
+        Objects.requireNonNull(algorithm, "algorithm");
+        requireState(pkiSigner == null, "Configure the signature algorithm on PkiSigner, not the builder");
+        this.signatureAlgorithm = algorithm;
         return this;
     }
 
@@ -293,8 +314,8 @@ public final class SignedCertificateBuilder {
     public X509Certificate build() {
         requireState(subject != null, "subject is required");
         requireState(subjectPublicKey != null, "publicKey (or keyPair) is required");
-        requireState(issuerCertificate != null && issuerPrivateKey != null,
-                "issuer(certificate, privateKey) is required");
+        requireState(issuerCertificate != null && (issuerPrivateKey != null || pkiSigner != null),
+                "issuer(certificate, privateKey or signer) is required");
         requireState(validFor != null || notAfter != null,
                 "either validFor(Duration) or validUntil(Instant) is required");
 
@@ -312,9 +333,9 @@ public final class SignedCertificateBuilder {
         BigInteger resolvedSerial = (serialNumber != null)
                 ? serialNumber
                 : CertificateBuildSupport.randomSerial();
-        String resolvedSigAlg = (signatureAlgorithm != null)
-                ? signatureAlgorithm
-                : CertificateBuildSupport.defaultSignatureAlgorithm(issuerPrivateKey);
+        PkiSigner resolvedSigner = pkiSigner != null ? pkiSigner : PkiSigner.jca(issuerPrivateKey,
+                signatureAlgorithm != null ? signatureAlgorithm
+                        : CertificateBuildSupport.defaultSignatureAlgorithm(issuerPrivateKey));
 
         X500Name issuerDn = X500Name.getInstance(
                 issuerCertificate.getSubjectX500Principal().getEncoded());
@@ -329,11 +350,10 @@ public final class SignedCertificateBuilder {
 
         try {
             addExtensions(certBuilder);
-            ContentSigner signer = new JcaContentSignerBuilder(resolvedSigAlg)
-                    .build(issuerPrivateKey);
+            ContentSigner signer = PkiSignerSupport.contentSigner(resolvedSigner);
             X509CertificateHolder holder = certBuilder.build(signer);
             return CertificateBuildSupport.toX509Certificate(holder);
-        } catch (GeneralSecurityException | OperatorCreationException | IOException e) {
+        } catch (GeneralSecurityException | IOException e) {
             throw new IllegalStateException("Failed to build signed certificate", e);
         }
     }
