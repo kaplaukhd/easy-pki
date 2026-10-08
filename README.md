@@ -504,6 +504,7 @@ class MyServiceTest {
 | Key generation | `PkiKeys.rsa(int)` · `PkiKeys.ec(Curve)` (P-256 / P-384 / P-521) · `PkiKeys.ed25519()` |
 | Self-signed certs | `PkiCertificate.selfSigned()...build()` |
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
+| Issuance profiles | `rootCa()` · `intermediateCa()` · `tlsServer()` · `tlsClient()` — role defaults and checks before signing |
 | Signing backend | `PkiSigner` — JCA provider selection or external signing, without exporting private keys |
 | Identity | `PkiIdentity` — signing handle, leaf and ordered chain; key possession checked without export |
 | Trust | `TrustBundle` — explicit anchors from PEM/JKS/PKCS#12, immutable snapshots and merging |

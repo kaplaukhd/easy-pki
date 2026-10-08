@@ -57,4 +57,24 @@ public final class PkiCertificate {
     public static SignedCertificateBuilder signed() {
         return new SignedCertificateBuilder();
     }
+    /** Starts the Root CA issuance profile (self-signed, keyCertSign/cRLSign). */
+    public static SelfSignedCertificateBuilder rootCa() {
+        return selfSigned().profile(CertificateProfile.ROOT_CA);
+    }
+
+    /** Starts the Intermediate CA profile; requires issuer(PkiIdentity), default pathLength=0. */
+    public static SignedCertificateBuilder intermediateCa() {
+        return signed().profile(CertificateProfile.INTERMEDIATE_CA);
+    }
+
+    /** Starts the TLS server profile; requires an issuer identity and explicit DNS/IP SAN. */
+    public static SignedCertificateBuilder tlsServer() {
+        return signed().profile(CertificateProfile.TLS_SERVER);
+    }
+
+    /** Starts the TLS client profile; requires an issuer identity and explicit client identity. */
+    public static SignedCertificateBuilder tlsClient() {
+        return signed().profile(CertificateProfile.TLS_CLIENT);
+    }
+
 }

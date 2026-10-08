@@ -25,6 +25,8 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.security.interfaces.EdECKey;
 import java.util.Objects;
+import javax.security.auth.x500.X500Principal;
+import org.bouncycastle.asn1.x500.X500Name;
 import java.util.Set;
 
 import org.bouncycastle.asn1.x509.Extension;
@@ -106,16 +108,28 @@ final class CertificateBuildSupport {
                                           SanBuilder sanBuilder,
                                           Set<ExtendedKeyUsage> extendedKeyUsages)
             throws IOException {
+        GeneralNames names = sanBuilder == null || sanBuilder.isEmpty() ? null
+                : new GeneralNames(sanBuilder.toGeneralNames());
+        addSanAndExtendedKeyUsage(certBuilder, names, extendedKeyUsages, false);
+    }
+
+    static void addSanAndExtendedKeyUsage(X509v3CertificateBuilder certBuilder,
+                                          GeneralNames names, Set<ExtendedKeyUsage> extendedKeyUsages,
+                                          boolean criticalSan) throws IOException {
         if (!extendedKeyUsages.isEmpty()) {
             KeyPurposeId[] purposes = extendedKeyUsages.stream()
                     .map(ExtendedKeyUsage::purposeId).toArray(KeyPurposeId[]::new);
             certBuilder.addExtension(Extension.extendedKeyUsage, false,
                     new org.bouncycastle.asn1.x509.ExtendedKeyUsage(purposes));
         }
-        if (sanBuilder != null && !sanBuilder.isEmpty()) {
-            certBuilder.addExtension(Extension.subjectAlternativeName, false,
-                    new GeneralNames(sanBuilder.toGeneralNames()));
+        if (names != null) {
+            certBuilder.addExtension(Extension.subjectAlternativeName, criticalSan, names);
         }
+    }
+
+    static X500Principal principal(X500Name name) {
+        try { return new X500Principal(name.getEncoded()); }
+        catch (IOException e) { throw new IllegalArgumentException("Cannot encode subject name", e); }
     }
 
     /** Converts a BouncyCastle {@link X509CertificateHolder} to a standard JCA certificate. */

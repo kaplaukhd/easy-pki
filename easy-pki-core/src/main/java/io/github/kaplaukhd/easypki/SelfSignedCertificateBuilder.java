@@ -80,6 +80,8 @@ public final class SelfSignedCertificateBuilder {
     private String signatureAlgorithm;
 
     private boolean isCA;
+    private boolean caConfigured;
+    private CertificateProfile profile;
     private Integer pathLength;
 
     private final Set<KeyUsage> keyUsages = EnumSet.noneOf(KeyUsage.class);
@@ -211,10 +213,11 @@ public final class SelfSignedCertificateBuilder {
 
     /**
      * Marks the certificate as a CA — adds {@code BasicConstraints(cA=TRUE)}.
-     * Default is {@code false}.
+     * Unprofiled builders default to {@code false}; profiles enforce their role flag.
      */
     public SelfSignedCertificateBuilder isCA(boolean ca) {
         this.isCA = ca;
+        this.caConfigured = true;
         return this;
     }
 
@@ -229,6 +232,7 @@ public final class SelfSignedCertificateBuilder {
         }
         this.pathLength = pathLength;
         this.isCA = true;
+        this.caConfigured = true;
         return this;
     }
 
@@ -270,12 +274,28 @@ public final class SelfSignedCertificateBuilder {
     }
 
     /**
+     * Selects an opt-in issuance policy. Defaults are resolved per build and
+     * contradictory settings are rejected before requesting a certificate signature.
+     * The raw builder behavior is unchanged when no profile is selected.
+     * Self-signed profiles accept ROOT_CA or TLS_SERVER/TLS_CLIENT and require
+     * a nonempty subject (also used as issuer).
+     */
+    public SelfSignedCertificateBuilder profile(CertificateProfile profile) {
+        this.profile = Objects.requireNonNull(profile, "profile");
+        return this;
+    }
+
+    /**
      * Builds and signs the certificate.
      *
      * @throws IllegalStateException if required fields are missing.
      */
     public X509Certificate build() {
-        requireState(subject != null, "subject is required");
+        X500Name resolvedSubject = subject;
+        if (resolvedSubject == null && profile != null && profile.isTls()) {
+            resolvedSubject = X500Name.getInstance(new X500Principal("").getEncoded());
+        }
+        requireState(resolvedSubject != null, "subject is required");
         requireState(keyPair != null || pkiSigner != null, "keyPair or signer(publicKey, signer) is required");
         requireState(validFor != null || notAfter != null,
                 "either validFor(Duration) or validUntil(Instant) is required");
@@ -285,11 +305,20 @@ public final class SelfSignedCertificateBuilder {
                 ? notAfter
                 : resolvedNotBefore.plus(validFor);
 
+        if (profile != null) {
+            resolvedNotBefore = ProfileConfiguration.encodedTime(resolvedNotBefore);
+            resolvedNotAfter = ProfileConfiguration.encodedTime(resolvedNotAfter);
+        }
+
         if (!resolvedNotAfter.isAfter(resolvedNotBefore)) {
             throw new IllegalStateException(
                     "notAfter (" + resolvedNotAfter + ") must be after notBefore ("
                             + resolvedNotBefore + ")");
         }
+
+        PublicKey publicKey = pkiSigner != null ? signerPublicKey : keyPair.getPublic();
+        ProfileConfiguration settings = ProfileConfiguration.resolve(profile, true, resolvedSubject,
+                publicKey, caConfigured, isCA, pathLength, keyUsages, extendedKeyUsages, sanBuilder);
 
         BigInteger resolvedSerial = (serialNumber != null)
                 ? serialNumber
@@ -297,37 +326,38 @@ public final class SelfSignedCertificateBuilder {
         PkiSigner resolvedSigner = pkiSigner != null ? pkiSigner : PkiSigner.jca(keyPair.getPrivate(),
                 signatureAlgorithm != null ? signatureAlgorithm
                         : CertificateBuildSupport.defaultSignatureAlgorithm(keyPair.getPrivate()));
-        PublicKey publicKey = pkiSigner != null ? signerPublicKey : keyPair.getPublic();
-
         X509v3CertificateBuilder certBuilder = new X509v3CertificateBuilder(
-                subject,
+                resolvedSubject,
                 resolvedSerial,
                 java.util.Date.from(resolvedNotBefore),
                 java.util.Date.from(resolvedNotAfter),
-                subject, // self-signed: issuer == subject
+                resolvedSubject, // self-signed: issuer == subject
                 SubjectPublicKeyInfo.getInstance(publicKey.getEncoded()));
 
         try {
-            addExtensions(certBuilder, publicKey);
+            addExtensions(certBuilder, publicKey, settings);
             ContentSigner signer = PkiSignerSupport.contentSigner(resolvedSigner);
             X509CertificateHolder holder = certBuilder.build(signer);
-            return CertificateBuildSupport.toX509Certificate(holder);
+            X509Certificate certificate = CertificateBuildSupport.toX509Certificate(holder);
+            if (profile != null) certificate.verify(publicKey);
+            return certificate;
         } catch (GeneralSecurityException | java.io.IOException e) {
             throw new IllegalStateException("Failed to build self-signed certificate", e);
         }
     }
 
-    private void addExtensions(X509v3CertificateBuilder certBuilder, PublicKey publicKey)
+    private void addExtensions(X509v3CertificateBuilder certBuilder, PublicKey publicKey,
+                               ProfileConfiguration settings)
             throws java.io.IOException, GeneralSecurityException {
 
-        BasicConstraints bc = isCA
-                ? (pathLength != null ? new BasicConstraints(pathLength) : new BasicConstraints(true))
+        BasicConstraints bc = settings.ca()
+                ? (settings.pathLength() != null ? new BasicConstraints(settings.pathLength()) : new BasicConstraints(true))
                 : new BasicConstraints(false);
         certBuilder.addExtension(Extension.basicConstraints, true, bc);
 
-        if (!keyUsages.isEmpty()) {
+        if (!settings.keyUsages().isEmpty()) {
             int bits = 0;
-            for (KeyUsage u : keyUsages) {
+            for (KeyUsage u : settings.keyUsages()) {
                 bits |= u.bcBit();
             }
             certBuilder.addExtension(
@@ -336,7 +366,8 @@ public final class SelfSignedCertificateBuilder {
                     new org.bouncycastle.asn1.x509.KeyUsage(bits));
         }
 
-        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, sanBuilder, extendedKeyUsages);
+        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, settings.names(),
+                settings.extendedKeyUsages(), settings.criticalSan());
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         SubjectKeyIdentifier ski = extUtils.createSubjectKeyIdentifier(publicKey);

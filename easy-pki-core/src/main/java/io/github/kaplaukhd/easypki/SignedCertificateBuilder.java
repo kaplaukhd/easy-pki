@@ -89,6 +89,7 @@ public final class SignedCertificateBuilder {
     private X509Certificate issuerCertificate;
     private PrivateKey issuerPrivateKey;
     private PkiSigner pkiSigner;
+    private PkiIdentity issuerIdentity;
 
     private Instant notBefore;
     private Instant notAfter;
@@ -98,6 +99,8 @@ public final class SignedCertificateBuilder {
     private String signatureAlgorithm;
 
     private boolean isCA;
+    private boolean caConfigured;
+    private CertificateProfile profile;
     private Integer pathLength;
 
     private final Set<KeyUsage> keyUsages = EnumSet.noneOf(KeyUsage.class);
@@ -164,6 +167,7 @@ public final class SignedCertificateBuilder {
         this.issuerCertificate = issuerCertificate;
         this.issuerPrivateKey = issuerPrivateKey;
         this.pkiSigner = null;
+        this.issuerIdentity = null;
         return this;
     }
 
@@ -179,6 +183,19 @@ public final class SignedCertificateBuilder {
         this.issuerCertificate = issuerCertificate;
         this.pkiSigner = signer;
         this.issuerPrivateKey = null;
+        this.issuerIdentity = null;
+        return this;
+    }
+
+    /**
+     * Uses a checked signing identity and retains its known issuer chain for
+     * profile preflight. Required by issued profiles; raw builders may also use it.
+     * No trust is inferred, and no new possession challenge is signed here.
+     */
+    public SignedCertificateBuilder issuer(PkiIdentity identity) {
+        Objects.requireNonNull(identity, "identity");
+        issuer(identity.getCertificate(), identity.getSigner());
+        this.issuerIdentity = identity;
         return this;
     }
 
@@ -236,9 +253,10 @@ public final class SignedCertificateBuilder {
         return this;
     }
 
-    /** Marks the certificate as a CA. Default is {@code false}. */
+    /** Marks the certificate as a CA. Unprofiled builders default to {@code false}; profiles enforce their role flag. */
     public SignedCertificateBuilder isCA(boolean ca) {
         this.isCA = ca;
+        this.caConfigured = true;
         return this;
     }
 
@@ -252,6 +270,7 @@ public final class SignedCertificateBuilder {
         }
         this.pathLength = pathLength;
         this.isCA = true;
+        this.caConfigured = true;
         return this;
     }
 
@@ -274,8 +293,9 @@ public final class SignedCertificateBuilder {
     }
 
     /**
-     * Configures the noncritical Subject Alternative Name extension. Multiple calls
-     * accumulate entries in insertion order, including duplicates.
+     * Configures Subject Alternative Names. Multiple calls accumulate entries
+     * in insertion order, including duplicates. SAN is noncritical for raw
+     * builders; an issued TLS profile with empty subject makes it critical.
      */
     public SignedCertificateBuilder san(Consumer<SanBuilder> configurer) {
         Objects.requireNonNull(configurer, "configurer");
@@ -307,12 +327,28 @@ public final class SignedCertificateBuilder {
     }
 
     /**
+     * Selects an opt-in issuance policy. Defaults are resolved per build and
+     * contradictory settings are rejected before requesting a certificate signature.
+     * The raw builder behavior is unchanged when no profile is selected.
+     * Issued profiles accept INTERMEDIATE_CA or TLS_SERVER/TLS_CLIENT and
+     * require issuer(PkiIdentity). TLS profiles may omit subject when SAN supplies identity.
+     */
+    public SignedCertificateBuilder profile(CertificateProfile profile) {
+        this.profile = Objects.requireNonNull(profile, "profile");
+        return this;
+    }
+
+    /**
      * Builds and signs the certificate.
      *
      * @throws IllegalStateException if required fields are missing.
      */
     public X509Certificate build() {
-        requireState(subject != null, "subject is required");
+        X500Name resolvedSubject = subject;
+        if (resolvedSubject == null && profile != null && profile.isTls()) {
+            resolvedSubject = X500Name.getInstance(new X500Principal("").getEncoded());
+        }
+        requireState(resolvedSubject != null, "subject is required");
         requireState(subjectPublicKey != null, "publicKey (or keyPair) is required");
         requireState(issuerCertificate != null && (issuerPrivateKey != null || pkiSigner != null),
                 "issuer(certificate, privateKey or signer) is required");
@@ -324,10 +360,26 @@ public final class SignedCertificateBuilder {
                 ? notAfter
                 : resolvedNotBefore.plus(validFor);
 
+        if (profile != null) {
+            resolvedNotBefore = ProfileConfiguration.encodedTime(resolvedNotBefore);
+            resolvedNotAfter = ProfileConfiguration.encodedTime(resolvedNotAfter);
+        }
+
         if (!resolvedNotAfter.isAfter(resolvedNotBefore)) {
             throw new IllegalStateException(
                     "notAfter (" + resolvedNotAfter + ") must be after notBefore ("
                             + resolvedNotBefore + ")");
+        }
+
+        ProfileConfiguration settings = ProfileConfiguration.resolve(profile, false, resolvedSubject,
+                subjectPublicKey, caConfigured, isCA, pathLength, keyUsages, extendedKeyUsages, sanBuilder);
+        if (profile != null) {
+            requireState(issuerIdentity != null, "Certificate profiles require issuer(PkiIdentity)");
+            ExtendedKeyUsage purpose = profile == CertificateProfile.TLS_SERVER ? ExtendedKeyUsage.TLS_SERVER
+                    : profile == CertificateProfile.TLS_CLIENT ? ExtendedKeyUsage.TLS_CLIENT : null;
+            ProfileIssuerValidation.validate(issuerIdentity,
+                    CertificateBuildSupport.principal(resolvedSubject), settings.ca(), settings.pathLength(),
+                    resolvedNotBefore, resolvedNotAfter, purpose);
         }
 
         BigInteger resolvedSerial = (serialNumber != null)
@@ -345,30 +397,32 @@ public final class SignedCertificateBuilder {
                 resolvedSerial,
                 java.util.Date.from(resolvedNotBefore),
                 java.util.Date.from(resolvedNotAfter),
-                subject,
+                resolvedSubject,
                 SubjectPublicKeyInfo.getInstance(subjectPublicKey.getEncoded()));
 
         try {
-            addExtensions(certBuilder);
+            addExtensions(certBuilder, settings);
             ContentSigner signer = PkiSignerSupport.contentSigner(resolvedSigner);
             X509CertificateHolder holder = certBuilder.build(signer);
-            return CertificateBuildSupport.toX509Certificate(holder);
+            X509Certificate certificate = CertificateBuildSupport.toX509Certificate(holder);
+            if (profile != null) certificate.verify(issuerCertificate.getPublicKey());
+            return certificate;
         } catch (GeneralSecurityException | IOException e) {
             throw new IllegalStateException("Failed to build signed certificate", e);
         }
     }
 
-    private void addExtensions(X509v3CertificateBuilder certBuilder)
+    private void addExtensions(X509v3CertificateBuilder certBuilder, ProfileConfiguration settings)
             throws IOException, GeneralSecurityException {
 
-        BasicConstraints bc = isCA
-                ? (pathLength != null ? new BasicConstraints(pathLength) : new BasicConstraints(true))
+        BasicConstraints bc = settings.ca()
+                ? (settings.pathLength() != null ? new BasicConstraints(settings.pathLength()) : new BasicConstraints(true))
                 : new BasicConstraints(false);
         certBuilder.addExtension(Extension.basicConstraints, true, bc);
 
-        if (!keyUsages.isEmpty()) {
+        if (!settings.keyUsages().isEmpty()) {
             int bits = 0;
-            for (KeyUsage u : keyUsages) {
+            for (KeyUsage u : settings.keyUsages()) {
                 bits |= u.bcBit();
             }
             certBuilder.addExtension(
@@ -377,7 +431,8 @@ public final class SignedCertificateBuilder {
                     new org.bouncycastle.asn1.x509.KeyUsage(bits));
         }
 
-        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, sanBuilder, extendedKeyUsages);
+        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, settings.names(),
+                settings.extendedKeyUsages(), settings.criticalSan());
 
         if (!crlDistributionPoints.isEmpty()) {
             DistributionPoint[] dps = new DistributionPoint[crlDistributionPoints.size()];

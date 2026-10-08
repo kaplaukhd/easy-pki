@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Opt-in CA/TLS profiles:** add `CertificateProfile` and
+  `PkiCertificate.rootCa()`, `intermediateCa()`, `tlsServer()` and `tlsClient()`.
+  Mandatory BasicConstraints/KU/EKU defaults reject incompatible additions
+  before a certificate signature is requested. Generic builders retain their
+  existing behavior unless a profile is selected.
+- **Issuer identity preflight:** issued profiles use `issuer(PkiIdentity)`
+  to check every supplied CA's signing permission, validity containment, remaining
+  path allowance and supported constraints. Intermediate path length defaults
+  to zero; self-issued rollover counting and finite maximum values are handled
+  explicitly. No trust or omitted-ancestor information is inferred.
+- **Explicit TLS identities:** server DNS/IP SAN and client
+  subject/SAN identities receive bounded ASCII/syntax checks. Client profiles
+  never add serverAuth. Empty issued TLS subjects require critical SAN;
+  self-signed profile subjects must be nonempty. Agreement-only subject keys are
+  rejected. Profile times use whole seconds, with collapsed intervals rejected.
 - **Ed25519:** add `PkiKeys.ed25519()` and certificate/signer default
   inference, including reloaded JDK `EdDSA` keys identified by named parameters.
   Ed448 remains distinct. PEM/DER, encrypted keys, PKCS#12 and PKIX are tested.

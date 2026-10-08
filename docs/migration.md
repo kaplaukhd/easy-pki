@@ -5,6 +5,32 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### Opt-in certificate profiles
+
+New `rootCa()`, `intermediateCa()`, `tlsServer()` and `tlsClient()` entry points
+select a `CertificateProfile`. The existing `selfSigned()` and `signed()` APIs
+remain unprofiled unless `.profile(...)` is explicitly called.
+
+Issued profiles require `issuer(PkiIdentity)` and check the supplied CA chain's
+authority, encoded validity and path budgets before requesting a certificate
+signature. Existing issuer overloads remain available on raw builders; replacing
+an identity issuer with one of them clears its stored chain and cannot bypass
+the profile requirement. Profiles impose mandatory KU/EKU/CA defaults and reject
+conflicting overrides, including agreement-only subject keys.
+
+TLS server profiles require explicit DNS/IP SAN; client profiles require an
+explicit subject or SAN identity and never add serverAuth. Empty subject is
+supported for issued TLS with critical SAN. Self-signed profiles require a
+nonempty subject/issuer. TLS SAN text receives bounded ASCII/syntax validation;
+generic SAN builders retain their old behavior.
+
+Validity is normalized to seconds within years 1950–9999 and must be contained
+within every supplied issuer. Root path length is optional; intermediate defaults
+to zero. Known self-issued CAs do not consume path length. Unsupported issuer
+constraints are rejected instead of silently ignored. These profiles are a
+bounded issuance policy, not full PKIX trust/authorization or public Web PKI
+compliance. See [profile contracts and examples](modules/core.md#certificate-profiles).
+
 ### Ed25519, explicit PSS, identities and trust bundles
 
 `PkiKeys.ed25519()` adds a typed generation entry point. RSA/EC defaults are

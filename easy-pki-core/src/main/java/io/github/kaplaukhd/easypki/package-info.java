@@ -21,6 +21,7 @@
  * <ul>
  *   <li>{@code PkiKeys} — RSA, EC and Ed25519 key pair generation</li>
  *   <li>{@code PkiCertificate} — fluent builders for self-signed and signed certificates</li>
+ *   <li>{@code CertificateProfile} — opt-in Root CA, Intermediate CA and TLS issuance policy</li>
  *   <li>{@code PkiSigner} — certificate signing with JCA providers or external backends</li>
  *   <li>{@code PkiIdentity} — checked signing handle and ordered presentation chain</li>
  *   <li>{@code TrustBundle} — explicit trust anchors from PEM, JKS and PKCS#12</li>

@@ -27,6 +27,9 @@ reloaded JDK keys; GOOD and REVOKED workflows are tested.
 
 ## Self-signed certificates
 
+For role-specific issuance, use the [certificate profiles](#certificate-profiles)
+below. The generic builders shown here remain available without profile checks.
+
 ```java
 X509Certificate root = PkiCertificate.selfSigned()
     .subject("CN=Root CA, O=Acme")
@@ -71,6 +74,123 @@ X509Certificate leaf = PkiCertificate.signed()
     .crlDistributionPoint("http://crl.example.org/ca.crl")
     .build();
 ```
+
+## Certificate profiles
+
+Profiles add consistent role extensions and validate the request before calling
+the certificate signer. Select an entry point, or call `.profile(...)` on an
+existing builder; selecting a profile before or after its settings has the same
+effect. Mandatory defaults are combined with explicit KU/EKU additions, and
+conflicting additions are rejected.
+
+| Profile | BasicConstraints | KeyUsage | EKU | Identity and path |
+|---|---|---|---|---|
+| `PkiCertificate.rootCa()` | CA, critical | keyCertSign + cRLSign, critical | absent | self-signed; nonempty subject; optional path length |
+| `PkiCertificate.intermediateCa()` | CA, critical | keyCertSign + cRLSign, critical | absent | issuer identity required; default pathLength=0 |
+| `PkiCertificate.tlsServer()` | not CA, critical | digitalSignature, critical | serverAuth only, noncritical | explicit DNS/IP SAN required; CN alone is insufficient |
+| `PkiCertificate.tlsClient()` | not CA, critical | digitalSignature, critical | clientAuth only, noncritical | explicit subject or SAN identity; no server names added |
+
+```java
+KeyPair rootKeys = PkiKeys.ed25519();
+X509Certificate root = PkiCertificate.rootCa()
+    .subject("CN=Private Root CA")
+    .keyPair(rootKeys)
+    .pathLength(1)
+    .validFor(Duration.ofDays(3650))
+    .build();
+PkiIdentity rootIdentity = PkiIdentity.of(root, rootKeys.getPrivate());
+
+KeyPair issuingKeys = PkiKeys.ec(Curve.P_256);
+X509Certificate issuingCa = PkiCertificate.intermediateCa()
+    .subject("CN=Private Issuing CA")
+    .keyPair(issuingKeys)
+    .issuer(rootIdentity)
+    .validFor(Duration.ofDays(1825))
+    .build();
+PkiIdentity issuer = PkiIdentity.of(issuingCa, issuingKeys.getPrivate(), root);
+
+X509Certificate server = PkiCertificate.tlsServer()
+    .publicKey(serverPublicKey)
+    .issuer(issuer)
+    .san(s -> s.dns("service.example.com").ip("192.0.2.10"))
+    .validFor(Duration.ofDays(90))
+    .build();
+
+X509Certificate client = PkiCertificate.tlsClient()
+    .subject("CN=worker-17")
+    .publicKey(clientPublicKey)
+    .issuer(issuer)
+    .validFor(Duration.ofDays(90))
+    .build();
+```
+
+Issued profiles require `.issuer(PkiIdentity)`. That overload retains the
+supplied issuer chain for preflight and does not perform another possession
+challenge. Raw `signed()` still accepts the existing certificate/private-key
+and certificate/signer overloads. Calling those overloads after `issuer(identity)`
+replaces the signing source and clears the retained identity, so a profile
+cannot accidentally reuse constraints from a previous issuer.
+
+Subject key families are RSA, RSA-PSS, EC and Ed25519. Agreement-only X25519/X448
+keys cannot receive signing usages through these profiles. For a plain RSA TLS
+server key, explicitly adding `KEY_ENCIPHERMENT` is allowed for legacy key
+transport; it is never added automatically and is rejected for RSA-PSS, EC,
+Ed25519 and client profiles. CA profiles reject unrelated KU bits and all EKU;
+TLS profiles reject CA flags, path lengths, unrelated KU and additional EKU.
+
+### Issuer preflight and validity
+
+Every supplied issuer-chain certificate must have a nonempty CA subject,
+critical CA BasicConstraints and explicit `keyCertSign`. The child's encoded
+validity must fit within every supplied CA's validity interval. Exact endpoints
+are allowed. Profiles normalize times down to whole seconds, reject intervals
+that collapse after normalization, and support encoded years 1950–9999.
+Historical/future windows are permitted when explicitly supplied and contained;
+no lifetime is silently clamped or chosen for the caller.
+
+Path-length checks count non-self-issued CAs below each supplied ancestor;
+leaves and same-DN rollover CAs do not consume a level. A new intermediate's
+declared path budget must also fit the remaining allowance of every supplied
+ancestor. Root CA defaults have no path-length restriction; intermediate
+defaults permit leaf issuance only. This budget check and validity containment
+are conservative library issuance policies, beyond ordinary PKIX path acceptance.
+
+Name constraints, policy constraints, policy mappings and inhibitAnyPolicy in a
+supplied CA are currently rejected, even when noncritical. Other unprocessed
+critical extensions are rejected as well. Issuer EKU must permit the selected
+TLS purpose (or anyExtendedKeyUsage); issuing a CA beneath an EKU-bearing issuer
+is outside this bounded policy and fails. Constraints are checked before any
+certificate signature request; a returned profile certificate's signature is
+also verified against the expected issuing key.
+
+The check uses the provided identity chain only. It does not discover missing
+ancestors, establish trust, check revocation, authorize names, or certify public
+Web PKI/CA-Browser Forum compliance. Keep application issuance authorization and
+the validation module's acceptance policy separate. `PkiIdentity` construction
+itself already performs a key-possession signature, before it reaches the builder.
+
+### TLS identities
+
+Server SANs accept DNS names and IP literals only; client SANs additionally
+accept ASCII mailbox and absolute URI identities. A client can instead use an
+explicit nonempty subject. Profiles never derive a server name from CN or copy
+the issuer's names into a client certificate.
+
+DNS input uses ASCII LDH labels (1–63 characters, total at most 253), with no
+trailing dot. Single-label private names are allowed. A wildcard must be the
+entire leftmost label with at least two following labels. Supply international
+names as application-prepared ASCII A-labels. IP literals use the IP SAN type;
+CIDR/masks are rejected. Mailboxes use a bounded ASCII dot-atom form; client URI
+values must be absolute ASCII URIs with a nonempty scheme-specific part. No DNS
+resolution, public-suffix, URI-scheme policy, mailbox ownership or deliverability
+check is performed. Original text is checked before relying on ASN.1 values,
+preventing Unicode truncation from turning invalid input into a different name.
+
+An issued TLS certificate may omit its subject when SAN identifies it; SAN is
+then critical. With a nonempty subject SAN is noncritical. Self-signed TLS
+profiles use `selfSigned().profile(CertificateProfile.TLS_SERVER)` or
+`TLS_CLIENT` and always require a nonempty subject, because it is also the issuer.
+Ordinary unprofiled builders keep their previous settings and SAN behavior.
 
 ## Signing without exporting private keys
 

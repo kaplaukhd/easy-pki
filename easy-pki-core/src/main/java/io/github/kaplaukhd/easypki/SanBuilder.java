@@ -36,6 +36,8 @@ import org.bouncycastle.asn1.x509.GeneralName;
 public final class SanBuilder {
 
     private final List<GeneralName> names = new ArrayList<>();
+    // Retain original text: BC's non-validating IA5 encoder may truncate Unicode.
+    private final List<String> originalValues = new ArrayList<>();
 
     SanBuilder() {
         // Package-private: obtained through certificate builders.
@@ -45,6 +47,7 @@ public final class SanBuilder {
     public SanBuilder dns(String hostname) {
         Objects.requireNonNull(hostname, "hostname");
         names.add(new GeneralName(GeneralName.dNSName, hostname));
+        originalValues.add(hostname);
         return this;
     }
 
@@ -52,6 +55,7 @@ public final class SanBuilder {
     public SanBuilder ip(String ipAddress) {
         Objects.requireNonNull(ipAddress, "ipAddress");
         names.add(new GeneralName(GeneralName.iPAddress, ipAddress));
+        originalValues.add(ipAddress);
         return this;
     }
 
@@ -59,6 +63,7 @@ public final class SanBuilder {
     public SanBuilder email(String emailAddress) {
         Objects.requireNonNull(emailAddress, "emailAddress");
         names.add(new GeneralName(GeneralName.rfc822Name, emailAddress));
+        originalValues.add(emailAddress);
         return this;
     }
 
@@ -66,7 +71,19 @@ public final class SanBuilder {
     public SanBuilder uri(String uri) {
         Objects.requireNonNull(uri, "uri");
         names.add(new GeneralName(GeneralName.uniformResourceIdentifier, uri));
+        originalValues.add(uri);
         return this;
+    }
+
+    /** Profiles validate original input before relying on already-encoded IA5 values. */
+    void requireAsciiValues() {
+        for (String value : originalValues) {
+            for (int i = 0; i < value.length(); i++) {
+                if (value.charAt(i) > 0x7f) {
+                    throw new IllegalArgumentException("Profile SAN must use ASCII values; use DNS A-labels for international names");
+                }
+            }
+        }
     }
 
     boolean isEmpty() {
