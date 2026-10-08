@@ -197,7 +197,8 @@ public final class CrlBuilder {
             builder.addExtension(
                     Extension.authorityKeyIdentifier,
                     false,
-                    extUtils.createAuthorityKeyIdentifier(issuerCertificate.getPublicKey()));
+                    new org.bouncycastle.asn1.x509.AuthorityKeyIdentifier(extUtils
+                            .createAuthorityKeyIdentifier(issuerCertificate).getKeyIdentifierOctets()));
             builder.addExtension(
                     Extension.cRLNumber,
                     false,

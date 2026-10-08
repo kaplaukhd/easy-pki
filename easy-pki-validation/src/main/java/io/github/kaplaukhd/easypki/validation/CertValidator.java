@@ -552,6 +552,12 @@ public final class CertValidator {
             }
             return false;
         }
+        String unsupported = unsupportedCrlReason(crl);
+        if (unsupported != null) {
+            errors.add(new ValidationError(ValidationError.Code.UNSUPPORTED_CRL,
+                    "CRL check for '" + subject(subject) + "' from " + source + ": " + unsupported));
+            return false;
+        }
         if (crl.getThisUpdate() == null || crl.getThisUpdate().toInstant().isAfter(now)) {
             errors.add(crlFailure(subject, source, "CRL thisUpdate is missing or in the future"));
             return false;
@@ -568,6 +574,34 @@ public final class CertValidator {
             return false;
         }
         return true;
+    }
+
+    // Only complete, direct, unpartitioned CRLs are interpreted. Reject a
+    // candidate before treating absence of a serial as evidence of GOOD.
+    private static String unsupportedCrlReason(X509CRL crl) {
+        if (crl.getExtensionValue("2.5.29.27") != null) {
+            return "Delta CRL (deltaCRLIndicator) is unsupported";
+        }
+        if (crl.getExtensionValue("2.5.29.28") != null) {
+            return "Scoped or indirect CRL (issuingDistributionPoint) is unsupported";
+        }
+        Set<String> critical = crl.getCriticalExtensionOIDs();
+        if (critical != null && !critical.isEmpty()) {
+            return "Unsupported critical CRL extensions: " + critical;
+        }
+        Set<? extends X509CRLEntry> entries = crl.getRevokedCertificates();
+        if (entries != null) {
+            for (X509CRLEntry entry : entries) {
+                if (entry.getExtensionValue("2.5.29.29") != null) {
+                    return "Indirect CRL entry (certificateIssuer) is unsupported";
+                }
+                Set<String> entryCritical = entry.getCriticalExtensionOIDs();
+                if (entryCritical != null && !entryCritical.isEmpty()) {
+                    return "Unsupported critical CRL entry extensions: " + entryCritical;
+                }
+            }
+        }
+        return null;
     }
 
     private static ValidationError crlFailure(X509Certificate subject, String source, String detail) {

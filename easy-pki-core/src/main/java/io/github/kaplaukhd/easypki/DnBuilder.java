@@ -16,17 +16,20 @@
 package io.github.kaplaukhd.easypki;
 
 import java.util.Objects;
+import java.util.ArrayList;
+import java.util.List;
+import javax.naming.ldap.Rdn;
+import javax.security.auth.x500.X500Principal;
 
 import org.bouncycastle.asn1.ASN1ObjectIdentifier;
 import org.bouncycastle.asn1.x500.X500Name;
-import org.bouncycastle.asn1.x500.X500NameBuilder;
 import org.bouncycastle.asn1.x500.style.BCStyle;
 
 /**
  * Fluent builder for X.500 Distinguished Names.
  *
  * <p>Call order is preserved: attributes appear in the resulting DN in the
- * order they were added, which is the RFC 4514 convention (most-specific
+ * display order they were added, which is the RFC 4514 convention (most-specific
  * first, e.g. {@code CN=host, O=Corp, C=RU}).
  *
  * <p>Typical use through a certificate builder:
@@ -38,7 +41,7 @@ import org.bouncycastle.asn1.x500.style.BCStyle;
  */
 public final class DnBuilder {
 
-    private final X500NameBuilder delegate = new X500NameBuilder(BCStyle.INSTANCE);
+    private final List<String> rdns = new ArrayList<>();
 
     DnBuilder() {
         // Package-private: instances are obtained through certificate builders.
@@ -106,11 +109,11 @@ public final class DnBuilder {
 
     private DnBuilder add(ASN1ObjectIdentifier attrOid, String value) {
         Objects.requireNonNull(value, "value");
-        delegate.addRDN(attrOid, value);
+        rdns.add(attrOid.getId() + "=" + Rdn.escapeValue(value));
         return this;
     }
 
     X500Name toX500Name() {
-        return delegate.build();
+        return X500Name.getInstance(new X500Principal(String.join(",", rdns)).getEncoded());
     }
 }

@@ -255,6 +255,23 @@ class ChainBuilderTest {
     }
 
     @Test
+    void issuerSkiDoesNotPinLeafToOneCrossSignedCertificate() {
+        KeyPair otherKeys = PkiKeys.ec(Curve.P_256);
+        X509Certificate otherRoot = PkiCertificate.selfSigned().subject("CN=Other Cross Signer")
+                .keyPair(otherKeys).isCA(true).validFor(Duration.ofDays(365)).build();
+        X509Certificate alternative = PkiCertificate.signed().subject(intermediate.getSubjectX500Principal())
+                .keyPair(intermediateKeys).issuer(otherRoot, otherKeys.getPrivate()).isCA(true)
+                .validFor(Duration.ofDays(100)).build();
+        X509Certificate child = PkiCertificate.signed().subject("CN=Cross-signed Child")
+                .keyPair(PkiKeys.ec(Curve.P_256)).issuer(alternative, intermediateKeys.getPrivate())
+                .validFor(Duration.ofDays(1)).build();
+        var chain = ChainBuilder.of(child).intermediates(alternative, intermediate)
+                .trustAnchors(root).build();
+        assertThat(chain.validate().isValid()).isTrue();
+        assertThat(chain.getCertificates()).containsExactly(child, intermediate, root);
+    }
+
+    @Test
     void crossSignedIntermediateFindsTrustedBranchInEitherPoolOrder() {
         KeyPair unrelatedKeys = PkiKeys.ec(Curve.P_256);
         X509Certificate unrelatedRoot = PkiCertificate.selfSigned()

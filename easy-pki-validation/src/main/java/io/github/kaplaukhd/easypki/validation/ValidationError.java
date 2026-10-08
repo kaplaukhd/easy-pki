@@ -47,6 +47,8 @@ public record ValidationError(Code code, String message) {
         OCSP_UNAVAILABLE,
         /** A CRL could not be fetched or parsed. */
         CRL_UNAVAILABLE,
+        /** A CRL uses scope, delta, indirect or critical-extension semantics not implemented here. */
+        UNSUPPORTED_CRL,
         /** A CA's permitted certification path length was exceeded. */
         PATH_TOO_LONG,
         /** A certificate's key usage does not permit its role in the path. */

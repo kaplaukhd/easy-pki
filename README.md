@@ -504,19 +504,19 @@ class MyServiceTest {
 | Key generation | `PkiKeys.rsa(int)` · `PkiKeys.ec(Curve)` (P-256 / P-384 / P-521) |
 | Self-signed certs | `PkiCertificate.selfSigned()...build()` |
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
-| Subject DN | RFC 4514 string *or* `DnBuilder` (`cn/o/ou/c/l/st/email/...`) |
+| Subject DN | JCA RFC 2253/4514 order; `String`, `X500Principal` or literal `DnBuilder` values |
 | Validity | `validFor(Duration)` · `validFrom(Instant)` · `validUntil(Instant)` |
 | Serial | random positive nonzero, at most 159 bits / 20 DER value octets · validated `serialNumber(BigInteger)` override |
 | Signature alg | auto (SHA-256 + RSA / ECDSA) · override |
 | Extensions | `BasicConstraints` · `KeyUsage` · `ExtendedKeyUsage` · SAN · CDP · AIA · SKI · AKI |
-| PEM / DER I/O | `PkiCertificates` · `PkiPrivateKeys` (incl. encrypted PKCS#8 AES-256-CBC) |
+| PEM / DER I/O | `PkiCertificates` · `PkiPrivateKeys` (`char[]` passwords, configurable PBKDF2 PRF/cost, AES-256-CBC) |
 | PKCS#12 | `PkiPkcs12.create()` / `.load()` — interoperable with `KeyStore` |
-| Inspection | `PkiCertInfo.of(cert)` — 20+ accessors including fingerprints |
+| Inspection | `PkiCertInfo.of(cert)` — fingerprints, `isSelfIssued()` name check, verified `isSelfSigned()` |
 | CRL build | `PkiCrl.issued()...build()` with auto CRLNumber / AKI |
 | CRL I/O | `PkiCrls.toPem / toDer / fromFile` (auto-detect) |
 | Chain validation | `CertValidator` — PKIX validation of an ordered chain against explicit trust anchors |
 | OCSP | `.ocsp(...)` — nonce, AIA-derived or explicit URL, proxy, timeout |
-| CRL | `.crl(...)` — static list **or** HTTP auto-fetch with TTL cache + proxy |
+| CRL | `.crl(...)` — complete direct unpartitioned CRLs; static or HTTP fetch with TTL cache + proxy; unsupported forms reported explicitly |
 | Fallback | `.ocspWithCrlFallback()` — OCSP first, CRL on failure |
 | Chain building | `ChainBuilder.of(cert).intermediates(...).trustStore(...).build()` |
 | Spring Boot | `EasyPkiValidator`, `CertificateMonitor`, `EasyPkiHealthIndicator`, `EasyPkiClientCertFilter` |
@@ -560,7 +560,8 @@ coverage report. All checks must pass before a pull request is accepted.
   stack traces.
 - **Secure defaults.** Minimum RSA 2048. Random positive, nonzero serials
   capped at 159 bits (at most 20 DER value octets, RFC 5280).
-  AES-256-CBC for encrypted PKCS#8. SHA-256 signatures.
+  PBKDF2-HMAC-SHA-256 (600,000 iterations) and AES-256-CBC for encrypted
+  PKCS#8; configurable through `PemEncryptionOptions`. SHA-256 signatures.
 - **Java-idiomatic.** `Duration`, `Instant`, typed `Optional`, immutable
   result types, fluent builders, records.
 - **Interoperable.** Input and output always conform to JCA types

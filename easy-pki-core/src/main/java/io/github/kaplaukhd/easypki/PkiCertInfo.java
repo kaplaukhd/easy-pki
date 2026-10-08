@@ -17,6 +17,7 @@ package io.github.kaplaukhd.easypki;
 
 import java.math.BigInteger;
 import java.security.MessageDigest;
+import java.security.GeneralSecurityException;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.CertificateEncodingException;
 import java.security.cert.CertificateParsingException;
@@ -95,9 +96,24 @@ public final class PkiCertInfo {
         return certificate.getSerialNumber();
     }
 
-    /** Returns whether the certificate is self-signed (subject DN equals issuer DN). */
-    public boolean isSelfSigned() {
+    /** Returns whether the subject and issuer names match, without verifying the signature. */
+    public boolean isSelfIssued() {
         return certificate.getSubjectX500Principal().equals(certificate.getIssuerX500Principal());
+    }
+
+    /**
+     * Returns whether names match and the signature verifies with the certificate's
+     * own public key. Unsupported algorithms or invalid signatures return false.
+     * This does not establish trust or check validity dates or CA constraints.
+     */
+    public boolean isSelfSigned() {
+        if (!isSelfIssued()) return false;
+        try {
+            certificate.verify(certificate.getPublicKey());
+            return true;
+        } catch (GeneralSecurityException e) {
+            return false;
+        }
     }
 
     // ---------- Validity ----------

@@ -84,6 +84,18 @@ The validator looks up a matching CRL by issuer DN, verifies its signature
 against the issuer's public key, and enforces
 `thisUpdate`/`nextUpdate` freshness.
 
+Only complete, direct, unpartitioned CRLs are interpreted. A delta CRL
+(`deltaCRLIndicator`), any `issuingDistributionPoint` extension (including an
+empty one), an indirect entry (`certificateIssuer`), or any critical CRL/entry
+extension produces `UNSUPPORTED_CRL`. Scope/reason partitions and indirect
+issuers are not implemented. This deliberately conservative boundary applies
+to supplied and downloaded CRLs; an unsupported candidate cannot establish GOOD.
+Unknown noncritical extensions can be ignored. The next candidate may still
+provide a definitive answer; recovered diagnostics move to `getWarnings()`.
+If no supported candidate succeeds, validation fails instead of silently
+treating that evidence as absent. `PkiCrl` emits complete direct CRLs, and its
+AKI uses issuer SKI with the same absent-SKI fallback as certificate issuance.
+
 ### HTTP auto-fetch
 
 ```java

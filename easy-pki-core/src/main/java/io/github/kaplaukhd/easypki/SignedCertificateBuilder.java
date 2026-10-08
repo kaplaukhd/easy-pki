@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Objects;
+import javax.security.auth.x500.X500Principal;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -80,7 +81,7 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
  *       derived from the <em>issuer's</em> private key.</li>
  *   <li>{@code notBefore} = now (when not explicitly set).</li>
  *   <li>SubjectKeyIdentifier derived from the subject public key;
- *       AuthorityKeyIdentifier derived from the issuer's public key.</li>
+ *       AuthorityKeyIdentifier taken from the issuer's SKI, or derived from its public key if absent.</li>
  * </ul>
  */
 public final class SignedCertificateBuilder {
@@ -111,10 +112,19 @@ public final class SignedCertificateBuilder {
         // Package-private: use PkiCertificate.signed().
     }
 
-    /** Sets the subject distinguished name from an RFC 4514 string. */
+    /** Sets the subject distinguished name using the JCA RFC 2253/4514 convention. */
     public SignedCertificateBuilder subject(String rfc4514) {
         Objects.requireNonNull(rfc4514, "rfc4514");
-        this.subject = new X500Name(rfc4514);
+        return subject(new X500Principal(rfc4514));
+    }
+
+    /**
+     * Sets the subject from the principal's DER encoding without reordering
+     * its RDNs or converting attribute values through text.
+     */
+    public SignedCertificateBuilder subject(X500Principal principal) {
+        Objects.requireNonNull(principal, "principal");
+        this.subject = X500Name.getInstance(principal.getEncoded());
         return this;
     }
 
@@ -395,8 +405,10 @@ public final class SignedCertificateBuilder {
         SubjectKeyIdentifier ski = extUtils.createSubjectKeyIdentifier(subjectPublicKey);
         certBuilder.addExtension(Extension.subjectKeyIdentifier, false, ski);
 
-        AuthorityKeyIdentifier aki = extUtils.createAuthorityKeyIdentifier(
-                issuerCertificate.getPublicKey());
+        // Preserve the existing key-identifier-only encoding; identify the key,
+        // without adding constraints tied to one cross-signed issuer certificate.
+        AuthorityKeyIdentifier aki = new AuthorityKeyIdentifier(extUtils
+                .createAuthorityKeyIdentifier(issuerCertificate).getKeyIdentifierOctets());
         certBuilder.addExtension(Extension.authorityKeyIdentifier, false, aki);
     }
 

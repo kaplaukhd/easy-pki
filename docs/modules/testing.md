@@ -227,26 +227,25 @@ class AuthServiceTest {
 
 ### Testing a Spring Boot app with `@AutoConfigureMockMvc`
 
-Export the trust store to use as the app's configured trust anchors:
+Use one class-scoped PKI for the Spring context and every test method.
+`@DynamicPropertySource` is static and accepts **only** a
+`DynamicPropertyRegistry`; it does not receive JUnit-injected parameters.
+Do not combine this fixture with a per-test `@InjectTestPki` field, which would
+issue client certificates from a different CA than the cached context trusts.
+
+The example below is compiled and executed in `easy-pki-test` as
+`WebSecurityExampleTest`. Its fixture exists before context initialization,
+its file is removed after the class, and `@DirtiesContext` prevents reuse of
+that context after cleanup. Protection is explicitly registered. Revocation
+is disabled for this trust/filter example; `NONE` still requires explicit
+trust. The servlet certificate attribute simulates the TLS container's output;
+MockMvc does not exercise a TLS handshake.
+
+Consumer tests need `easy-pki-test`, `easy-pki-spring-boot-starter`,
+`spring-boot-starter-web` and `spring-boot-starter-test`. In this repository,
+the Spring dependencies used to verify this example are test-scoped only.
+Run `mvn -pl easy-pki-test -am -Dtest=WebSecurityExampleTest -Dsurefire.failIfNoSpecifiedTests=false test`.
 
 ```java
-@SpringBootTest
-@AutoConfigureMockMvc
-@ExtendWith(EasyPkiExtension.class)
-class WebSecurityTest {
-
-    @InjectTestPki TestPki pki;
-
-    @DynamicPropertySource
-    static void trustStore(DynamicPropertyRegistry r, @InjectTestPki TestPki pki,
-                           @TempDir Path tmp) throws IOException {
-        Path p12 = tmp.resolve("ts.p12");
-        PkiPkcs12.create().certificate(pki.getRootCa())
-            .password("x").build().saveTo(p12);
-        r.add("easy-pki.trust-store.path", () -> "file:" + p12);
-        r.add("easy-pki.trust-store.password", () -> "x");
-    }
-
-    // ...
-}
+--8<-- "easy-pki-test/src/test/java/io/github/kaplaukhd/easypki/test/WebSecurityExampleTest.java:spring-example"
 ```

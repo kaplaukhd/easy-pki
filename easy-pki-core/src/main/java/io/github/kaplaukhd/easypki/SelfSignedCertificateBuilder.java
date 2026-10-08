@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.EnumSet;
 import java.util.Objects;
+import javax.security.auth.x500.X500Principal;
 import java.util.Set;
 import java.util.function.Consumer;
 
@@ -87,12 +88,21 @@ public final class SelfSignedCertificateBuilder {
     }
 
     /**
-     * Sets the subject distinguished name from an RFC 4514 string
+     * Sets the subject distinguished name using the JCA RFC 2253/4514 convention
      * (e.g. {@code "CN=example.com, O=Corp, C=RU"}).
      */
     public SelfSignedCertificateBuilder subject(String rfc4514) {
         Objects.requireNonNull(rfc4514, "rfc4514");
-        this.subject = new X500Name(rfc4514);
+        return subject(new X500Principal(rfc4514));
+    }
+
+    /**
+     * Sets the subject from the principal's DER encoding without reordering
+     * its RDNs or converting attribute values through text.
+     */
+    public SelfSignedCertificateBuilder subject(X500Principal principal) {
+        Objects.requireNonNull(principal, "principal");
+        this.subject = X500Name.getInstance(principal.getEncoded());
         return this;
     }
 

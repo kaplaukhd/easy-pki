@@ -45,7 +45,7 @@ X509Certificate leaf = PkiCertificate.signed()
     .build();
 ```
 
-## Subject DN — two forms
+## Subject DN
 
 === "RFC 4514 string"
 
@@ -60,6 +60,23 @@ X509Certificate leaf = PkiCertificate.signed()
     ```
 
 Both produce identical results — pick whichever reads cleaner in your code.
+
+String input is parsed by `X500Principal`, using its RFC 2253/4514 name
+convention: the most-specific RDN is written first. The fluent builder uses
+the same display order and treats attribute values as literals (escaping
+commas, plus signs, leading `#` and spaces). A string may contain multi-valued
+RDNs, for example `CN=host+UID=42,O=Acme,C=US`. Use JCA-supported keywords
+or numeric OIDs; Bouncy Castle-specific aliases are not the string contract.
+
+Both certificate builders also accept `.subject(X500Principal)`. The principal's
+DER encoding is preserved, including RDN order and attribute value types.
+Earlier snapshots reversed multi-component names on JCA readback; see the
+[migration guide](../migration.md) before reissuing certificates.
+
+For issuer-signed certificates and generated CRLs, AKI uses the issuer
+certificate's SKI, including nonstandard valid identifiers. If SKI is absent,
+the identifier is the SHA-1 hash of the issuer public-key BIT STRING, per
+RFC 5280. This hash identifies a key; it is not the signature algorithm.
 
 ## I/O
 
@@ -94,6 +111,34 @@ PrivateKey k  = PkiPrivateKeys.fromPem(pem);
 PrivateKey k2 = PkiPrivateKeys.fromPem(encrypted, "changeit");
 PrivateKey k3 = PkiPrivateKeys.fromFile(Path.of("key.pem"), "changeit");
 ```
+
+Encrypted output uses **PBES2 + PBKDF2-HMAC-SHA-256, 600,000 iterations,
+AES-256-CBC**, with fresh random salt and IV on every write. PBES2/PBKDF2
+keeps PKCS#8 interoperability with existing tools. The iteration default is
+a library policy informed by [OWASP's PBKDF2 work-factor guidance](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2),
+not a PKCS#8 requirement or a FIPS certification claim. Measure cost on the
+target system; reducing it weakens resistance to offline password guessing.
+HMAC-SHA-256 and HMAC-SHA-512 are available for new output; old encrypted
+formats, including the former defaults, remain readable.
+
+```java
+char[] password = "example-password".toCharArray(); // obtain securely in an application
+try {
+    var options = new PemEncryptionOptions(1_000_000, PemEncryptionOptions.Prf.HMAC_SHA256);
+    String encrypted = PkiPrivateKeys.toPem(privateKey, password, options);
+    PrivateKey restored = PkiPrivateKeys.fromPem(encrypted, password);
+    PkiPrivateKeys.toFile(privateKey, Path.of("key.pem"), password, options);
+} finally {
+    Arrays.fill(password, '\0');
+}
+```
+
+`PemEncryptionOptions` is immutable and holds no password. `char[]` overloads
+are available for String/Reader/InputStream/file input and String/file output.
+Operations clone caller arrays and clear their temporary copies on success
+or failure. Caller arrays remain unchanged and must be cleared by the caller.
+String overloads remain compatible but Strings cannot be erased; provider or
+JVM-internal copies are also outside this clearing guarantee.
 
 ## PKCS#12
 
@@ -147,6 +192,11 @@ leaf-first chain behavior.
 
 ## Inspection
 
+`isSelfSigned()` returns false if the signature is invalid or cannot be verified
+by the available JCA providers. Neither inspection method establishes trust,
+checks expiry, or validates CA constraints. A key-rollover certificate can be
+self-issued while being signed by a different key.
+
 `PkiCertInfo` wraps an `X509Certificate` in an ergonomic, read-only view.
 
 ```java
@@ -157,7 +207,8 @@ info.getIssuer();
 info.getSerialNumber();
 info.getNotBefore();                        // Instant
 info.getNotAfter();
-info.isSelfSigned();
+info.isSelfIssued();  // subject and issuer names match
+info.isSelfSigned();  // names match AND signature verifies with its own public key
 info.isExpired();
 info.isNotYetValid();
 info.isExpiringWithin(Duration.ofDays(30)); // monitoring helper

@@ -5,6 +5,46 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### DN, certificate identity, encrypted PEM and CRL support
+
+`subject(String)` now uses `X500Principal` parsing and ordering. For example,
+`CN=host,O=Acme,C=US` reads back in that order through JCA, instead of the
+reversed order emitted by earlier snapshots. Fluent `DnBuilder` uses the same
+display order, with literal escaped values. Multi-valued RDNs are supported
+in string/principal input; the fluent helper adds one RDN per call. Use
+JCA keywords or numeric OIDs instead of BC-specific keyword aliases. To
+preserve an existing subject exactly during renewal, pass
+`.subject(existingCertificate.getSubjectX500Principal())`. Existing encoded
+certificates and automatically copied issuer names are not rewritten.
+
+`PkiCertInfo.isSelfIssued()` checks name equality. `isSelfSigned()` now also
+verifies the signature with the certificate's own key; a key-rollover
+certificate signed by a different key is no longer reported as self-signed.
+Neither method checks trust or expiry. Certificate and CRL AKI now copy the
+issuer's SKI when present, preserving the key-identifier-only form; absent
+SKI falls back to the public-key identifier calculation.
+
+Encrypted PEM writing now explicitly selects PBKDF2-HMAC-SHA-256 with 600,000
+iterations and AES-256-CBC. This costs more CPU than the former BC defaults.
+Use immutable `PemEncryptionOptions` to tune iteration count and choose
+HMAC-SHA-256 or HMAC-SHA-512. Existing PEM formats remain readable. New
+`char[]` overloads leave caller arrays unchanged, clear temporary library
+copies on success/failure and retain no password in the options. Clear your
+own array after use; String and provider/JVM copies cannot be guaranteed
+erased. See [private-key I/O](modules/core.md#private-keys).
+
+Only complete direct unpartitioned CRLs are now interpreted. Delta CRLs,
+any issuing distribution point, indirect entries and critical CRL/entry
+extensions produce `UNSUPPORTED_CRL`; they can no longer establish GOOD.
+Fallback to a supported candidate remains possible, with the rejected
+candidate reported in warnings. Without such recovery the result is invalid.
+The [validation guide](modules/validation.md) defines the supported boundary.
+
+The [Spring testing example](modules/testing.md#testing-a-spring-boot-app-with-autoconfiguremockmvc)
+now uses one class-scoped CA and truststore, a single-argument static
+`DynamicPropertySource`, explicit filter registration and context cleanup.
+It is included directly from its compiled MockMvc test.
+
 ### PKCS#12, serial numbers and Bouncy Castle
 
 Trust-only `Pkcs12Bundle` exports now retain every certificate, each under a
@@ -302,7 +342,7 @@ See the [Spring guide](modules/spring-boot.md) for examples.
 
     JcaX509ExtensionUtils ext = new JcaX509ExtensionUtils();
     cb.addExtension(Extension.authorityKeyIdentifier, false,
-        ext.createAuthorityKeyIdentifier(caCert.getPublicKey()));
+        new AuthorityKeyIdentifier(ext.createAuthorityKeyIdentifier(caCert).getKeyIdentifierOctets()));
     cb.addExtension(Extension.cRLNumber, false,
         new CRLNumber(new BigInteger(128, new SecureRandom())));
 

@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **JCA-compatible distinguished names:** string and fluent subject
+  input now share JCA display/RDN order and correct literal escaping. Both
+  certificate builders accept `X500Principal` without changing its DER.
+  This corrects the previous reversal of multi-component subject names.
+- **Self-issued versus self-signed:** `PkiCertInfo.isSelfIssued()`
+  checks names; `isSelfSigned()` additionally verifies the signature with
+  the certificate's own public key. These inspection methods do not establish trust.
+- **Issuer key identifiers:** certificate and CRL AKI use issuer SKI
+  when present, with a public-key hash fallback when absent. The existing
+  key-identifier-only encoding and cross-signed path behavior are preserved.
+- **Explicit encrypted PEM policy:** default PBES2/PBKDF2-HMAC-SHA-256
+  with 600,000 iterations and AES-256-CBC; immutable `PemEncryptionOptions`
+  offers a configurable positive work factor and SHA-256/SHA-512 PRFs.
+  New `char[]` input/output overloads clear internal temporary copies on all
+  paths without changing caller arrays. Existing String APIs and old PEM
+  input remain supported; the stronger default costs more CPU.
+- **Executable Spring example:** use a static single-argument
+  `DynamicPropertySource`, one class-scoped PKI, explicit filter registration
+  and context/file cleanup. Documentation includes the compiled MockMvc test;
+  its Spring dependencies are test-scoped in the test-helper module.
+- **Explicit CRL support boundary:** reject delta, scoped or indirect
+  CRLs and critical CRL/entry extensions with `UNSUPPORTED_CRL`. Only complete
+  direct unpartitioned candidates establish status. A later supported source
+  can recover, retaining the earlier diagnostic as a warning.
 - **Complete trust-only PKCS#12 round trips:** export every
   supplied certificate as a separate trusted entry. Builder aliases are
   `<alias>`, `<alias>-2`, `<alias>-3`, etc. Loading retains all trusted
