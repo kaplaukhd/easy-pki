@@ -8,6 +8,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Complete trust-only PKCS#12 round trips:** export every
+  supplied certificate as a separate trusted entry. Builder aliases are
+  `<alias>`, `<alias>-2`, `<alias>-3`, etc. Loading retains all trusted
+  entries and provider-reported aliases in lexicographic order; the first
+  alias is the primary entry. Loaded aliases survive re-export, including
+  distinct aliases for repeated certificates. Identity/key bundles keep
+  their existing single-key and ordered-chain behavior.
+- **Bounded certificate serials:** both builders generate positive,
+  nonzero serials of at most 159 bits, fitting within 20 DER INTEGER value
+  octets. Explicit serials outside `1..2^159-1` are rejected immediately;
+  existing certificates remain readable.
+- **Bouncy Castle upgrade:** align `bcprov-jdk18on`,
+  `bcpkix-jdk18on` and transitive `bcutil-jdk18on` at **1.86**, upgraded from
+  1.78.1. Explicit management of `bcutil` prevents the Spring Boot BOM from
+  selecting an older version. Frozen fixtures verify reading certificate
+  PEM/DER, encrypted RSA/EC private-key PEM and identity PKCS#12 material
+  created with 1.78.1. No new easy-pki algorithm API is introduced.
+- **Accurate development and installation status:** README and
+  getting-started documentation identify the unfrozen development snapshot,
+  show local installation with matching Maven/Gradle coordinates, and
+  distinguish artifact publication from planned versions or Git tags.
+  The Java comparison now acknowledges JDK PKIX, configurable OCSP and CRL
+  capabilities.
 - **Complete revocation path:** check every certificate below the
   PKIX-selected trust anchor, including an omitted terminal anchor's child.
   The public supplied-chain result is preserved and anchors remain exempt.

@@ -5,6 +5,39 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### PKCS#12, serial numbers and Bouncy Castle
+
+Trust-only `Pkcs12Bundle` exports now retain every certificate, each under a
+separate trusted-entry alias. New bundles use the primary alias, then
+`<alias>-2`, `<alias>-3`, and so on. Loaded trust-only stores preserve all
+provider-reported aliases when re-exported and expose certificates in
+lexicographic alias order; their primary entry is now the first alias in
+that order. A trust-only `getChain()` is a flat collection that can contain
+unrelated roots, not an issuer chain. Identity bundles keep their existing
+key-entry and ordered-chain behavior. See the
+[PKCS#12 guide](modules/core.md#pkcs12) for details, including case normalization.
+
+Both certificate builders now require explicit serials in `1..2^159-1`.
+Values at or above `2^159` fail immediately with `IllegalArgumentException`;
+zero and negative values remain invalid. Generated serials use the same
+range, leaving room for the DER sign bit within the 20-octet value limit.
+Existing certificates are still readable; these constraints apply to issuance.
+
+The tested Bouncy Castle dependencies are upgraded together from 1.78.1 to
+[1.86](https://www.bouncycastle.org/resources/new-release-bouncy-castle-java-1-86/):
+`bcprov-jdk18on`, `bcpkix-jdk18on` and transitive `bcutil-jdk18on`.
+Applications overriding dependency versions must keep these artifacts aligned.
+Regression fixtures cover certificate PEM/DER, encrypted private-key PEM and
+identity PKCS#12 material produced before the upgrade. The library still uses
+JCA types and does not register a global provider; new algorithms in BC are not
+automatically exposed by easy-pki's builders.
+
+This development snapshot has no API freeze. Installation examples use a
+local `1.0.0-SNAPSHOT` build; use published coordinates only after verifying
+their availability in Maven Central.
+
+### Trust, path validation and revocation
+
 The unreleased validation changes are **breaking behavior changes**. A
 self-signed chain previously accepted without an explicit trust anchor now
 fails with `UNTRUSTED_ROOT`. Configure anchors from application-controlled
@@ -111,7 +144,11 @@ See the [Spring guide](modules/spring-boot.md) for examples.
         .addRDN(BCStyle.O, "Acme")
         .build();
 
-    BigInteger serial = new BigInteger(160, new SecureRandom());
+    SecureRandom random = new SecureRandom();
+    BigInteger serial;
+    do {
+        serial = new BigInteger(159, random);
+    } while (serial.signum() == 0);
     Date notBefore = new Date();
     Date notAfter = Date.from(Instant.now().plus(Duration.ofDays(3650)));
 
@@ -159,9 +196,15 @@ See the [Spring guide](modules/spring-boot.md) for examples.
         .addRDN(BCStyle.CN, "api.example.com")
         .build();
 
+    SecureRandom random = new SecureRandom();
+    BigInteger serial;
+    do {
+        serial = new BigInteger(159, random);
+    } while (serial.signum() == 0);
+
     X509v3CertificateBuilder cb = new JcaX509v3CertificateBuilder(
         new JcaX509CertificateHolder(issuerCert).getSubject(),
-        new BigInteger(160, new SecureRandom()),
+        serial,
         new Date(),
         Date.from(Instant.now().plus(Duration.ofDays(365))),
         subject,
@@ -317,5 +360,5 @@ See the [Spring guide](modules/spring-boot.md) for examples.
 - All builders return standard JCA types (`X509Certificate`,
   `X509CRL`, `PrivateKey`, `KeyStore`-compatible PKCS#12 bytes). You can
   always drop back to lower-level BouncyCastle or `java.security` APIs.
-- Defaults are opinionated (SHA-256, random 20-byte serials, RSA 2048
+- Defaults are opinionated (SHA-256, random nonzero serials of at most 159 bits, RSA 2048
   minimum, AES-256-CBC PKCS#8). Override only when you need to.

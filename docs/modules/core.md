@@ -121,6 +121,30 @@ loaded.getAlias();
 The output is interoperable with `KeyStore.getInstance("PKCS12")` — verified
 in the test suite.
 
+Omit `privateKey(...)` to create a trust-only store. Every certificate in
+`getChain()` is saved as a separate trusted certificate entry, including
+unrelated CA roots:
+
+```java
+Pkcs12Bundle trust = PkiPkcs12.create()
+    .certificate(rootA)
+    .chain(rootB, rootC)
+    .alias("trusted")
+    .password("changeit")
+    .build();
+trust.saveTo(Path.of("truststore.p12"));
+```
+
+New trust-only bundles assign the primary certificate the configured alias
+(default `1`) and the remaining entries `<alias>-2`, `<alias>-3`, and so
+on. The JCA provider may normalize alias case. On loading a trust-only store,
+all trusted X.509 entries are retained in lexicographic alias order; the
+first entry supplies `getAlias()` and `getCertificate()`. This is a flat
+certificate collection, not necessarily an issuer chain. For example,
+`trusted-10` sorts before `trusted-2`. A loaded store preserves its aliases
+on re-export. Identity bundles retain the existing private-key entry and
+leaf-first chain behavior.
+
 ## Inspection
 
 `PkiCertInfo` wraps an `X509Certificate` in an ergonomic, read-only view.
@@ -183,7 +207,7 @@ Every builder exposes escape hatches for uncommon cases:
 
 | Builder method | Default | Override for |
 |---|---|---|
-| `serialNumber(BigInteger)` | random 20-byte positive | deterministic tests |
+| `serialNumber(BigInteger)` | random positive nonzero, at most 159 bits | accepts only `1..2^159-1`; at most 20 DER INTEGER value octets |
 | `signatureAlgorithm(String)` | `SHA256with{RSA,ECDSA}` | SHA-384 / SHA-512 |
 | `validFrom(Instant)` / `validUntil(Instant)` | now / `validFor` offset | historical dating |
 

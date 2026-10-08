@@ -9,24 +9,30 @@ ergonomic API on top. What used to take 40–60 lines of low-level ceremony now
 fits in five readable lines — and you get validation, Spring Boot auto-config
 and test helpers in the same family of modules.
 
-> **Status:** `1.0.0-SNAPSHOT` in progress. All four modules are
-> feature-complete and stable; the public API is considered locked for
-> `1.0.0`. Final publication to Maven Central happens with the first
-> tagged release.
+> **Status:** `1.0.0-SNAPSHOT`, under active development. The API and
+> validation behavior may change before a stable release; there is no API
+> freeze yet. See the [migration guide](docs/migration.md) for compatibility
+> guidance. The examples below use a local
+> source build; a planned version or Git tag does not establish that an
+> artifact is available on Maven Central.
 
 ---
 
 ## Why easy-pki?
 
-Working with X.509 in Java today means choosing between:
+Java already provides much of the PKI infrastructure:
 
-- **`java.security` / JSSE** — limited, no support for custom OCSP/CRL
-  endpoints, awkward for anything beyond textbook TLS.
+- **`java.security` / JSSE** — provide PKIX path validation and building,
+  OCSP/CRL checking, key stores and TLS. JDK
+  [`PKIXRevocationChecker`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/security/cert/PKIXRevocationChecker.html)
+  supports a custom OCSP responder and supplied responses; `CertStore`
+  supplies CRLs. These APIs expose individual building blocks that an
+  application must configure and connect.
 - **BouncyCastle** — powerful but low-level. A single self-signed certificate
   requires `X500NameBuilder`, `JcaX509v3CertificateBuilder`, `ContentSigner`,
   a manual conversion back to `X509Certificate`, and forty lines of glue.
 
-`easy-pki` is the missing middle layer — a fluent, discoverable API designed
+`easy-pki` combines those building blocks with Bouncy Castle through a fluent API
 for everyday tasks: spinning up a CA, issuing a leaf cert with SANs,
 validating a chain with OCSP, loading a PKCS#12 bundle, monitoring expiry,
 writing a mTLS test.
@@ -53,8 +59,11 @@ X500Name subject = new X500NameBuilder()
     .addRDN(BCStyle.O, "MyOrg")
     .build();
 
-BigInteger serial = BigInteger.valueOf(
-    System.currentTimeMillis());
+SecureRandom random = new SecureRandom();
+BigInteger serial;
+do {
+    serial = new BigInteger(159, random);
+} while (serial.signum() == 0);
 Date notBefore = new Date();
 Date notAfter = Date.from(Instant.now()
     .plus(365, ChronoUnit.DAYS));
@@ -104,28 +113,42 @@ X509Certificate cert = PkiCertificate.selfSigned()
 
 `easy-pki` is a Maven multi-module project. Depend on the parts you need.
 
+For this development snapshot, build and install all modules in your local
+Maven repository first (Java 17+, Maven 3.9+):
+
+```bash
+git clone https://github.com/kaplaukhd/easy-pki.git
+cd easy-pki
+mvn clean install
+```
+
+The coordinates below resolve that local `1.0.0-SNAPSHOT`. To use a published
+release instead, select a version actually listed on
+[Maven Central](https://central.sonatype.com/namespace/io.github.kaplaukhd)
+and use the same version for all easy-pki modules.
+
 **Maven:**
 
 ```xml
 <dependency>
     <groupId>io.github.kaplaukhd</groupId>
     <artifactId>easy-pki-core</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 <dependency>
     <groupId>io.github.kaplaukhd</groupId>
     <artifactId>easy-pki-validation</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 <dependency>
     <groupId>io.github.kaplaukhd</groupId>
     <artifactId>easy-pki-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
 </dependency>
 <dependency>
     <groupId>io.github.kaplaukhd</groupId>
     <artifactId>easy-pki-test</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.0-SNAPSHOT</version>
     <scope>test</scope>
 </dependency>
 ```
@@ -133,10 +156,17 @@ X509Certificate cert = PkiCertificate.selfSigned()
 **Gradle:**
 
 ```kotlin
-implementation("io.github.kaplaukhd:easy-pki-core:1.0.0")
-implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0")
-implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0")
-testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0")
+repositories {
+    mavenLocal()    // the source build installed above
+    mavenCentral()  // third-party dependencies
+}
+
+dependencies {
+    implementation("io.github.kaplaukhd:easy-pki-core:1.0.0-SNAPSHOT")
+    implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0-SNAPSHOT")
+    implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0-SNAPSHOT")
+    testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0-SNAPSHOT")
+}
 ```
 
 ---
@@ -476,7 +506,7 @@ class MyServiceTest {
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
 | Subject DN | RFC 4514 string *or* `DnBuilder` (`cn/o/ou/c/l/st/email/...`) |
 | Validity | `validFor(Duration)` · `validFrom(Instant)` · `validUntil(Instant)` |
-| Serial | random 20-byte (RFC 5280) · `serialNumber(BigInteger)` override |
+| Serial | random positive nonzero, at most 159 bits / 20 DER value octets · validated `serialNumber(BigInteger)` override |
 | Signature alg | auto (SHA-256 + RSA / ECDSA) · override |
 | Extensions | `BasicConstraints` · `KeyUsage` · `ExtendedKeyUsage` · SAN · CDP · AIA · SKI · AKI |
 | PEM / DER I/O | `PkiCertificates` · `PkiPrivateKeys` (incl. encrypted PKCS#8 AES-256-CBC) |
@@ -498,7 +528,7 @@ class MyServiceTest {
 
 - **Java 17** or later
 - **Maven 3.9+** (for building from source)
-- **BouncyCastle 1.78+** (pulled in transitively by core)
+- **Bouncy Castle 1.86** (the tested version, pulled in transitively by core)
 - **Spring Boot 3.3+** (only for the starter)
 
 The library **never registers BouncyCastle globally**. Your application's JCA
@@ -528,7 +558,8 @@ coverage report. All checks must pass before a pull request is accepted.
 - **Fail loudly at the boundary.** Malformed input and missing required fields
   throw clear, actionable exceptions — never wrapped `GeneralSecurityException`
   stack traces.
-- **Secure defaults.** Minimum RSA 2048. Random 20-byte serials (RFC 5280).
+- **Secure defaults.** Minimum RSA 2048. Random positive, nonzero serials
+  capped at 159 bits (at most 20 DER value octets, RFC 5280).
   AES-256-CBC for encrypted PKCS#8. SHA-256 signatures.
 - **Java-idiomatic.** `Duration`, `Instant`, typed `Optional`, immutable
   result types, fluent builders, records.

@@ -56,7 +56,8 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
  *
  * <p>Defaults applied automatically:
  * <ul>
- *   <li>Random 20-byte positive serial number (RFC 5280 §4.1.2.2).</li>
+ *   <li>Random nonzero positive serial number of at most 159 bits,
+ *       fitting in 20 DER value octets (RFC 5280 §4.1.2.2).</li>
  *   <li>Signature algorithm {@code SHA256withRSA} for RSA keys,
  *       {@code SHA256withECDSA} for EC keys.</li>
  *   <li>{@code notBefore} = now (when not explicitly set).</li>
@@ -149,17 +150,17 @@ public final class SelfSignedCertificateBuilder {
     }
 
     /**
-     * Overrides the serial number. By default a random, positive, 20-byte
-     * serial is generated for every {@link #build()} call (RFC 5280 §4.1.2.2).
+     * Overrides the serial number with a value from 1 through 2<sup>159</sup> − 1.
+     * By default a fresh random serial in that range is generated for every
+     * {@link #build()} call. The DER INTEGER value occupies at most 20 octets
+     * (RFC 5280 §4.1.2.2).
      * Useful for deterministic fixtures in tests.
+     *
+     * @throws IllegalArgumentException if the value is not positive or exceeds 159 bits
+     * @throws NullPointerException if {@code serialNumber} is null
      */
     public SelfSignedCertificateBuilder serialNumber(BigInteger serialNumber) {
-        Objects.requireNonNull(serialNumber, "serialNumber");
-        if (serialNumber.signum() <= 0) {
-            throw new IllegalArgumentException(
-                    "serialNumber must be positive, got " + serialNumber);
-        }
-        this.serialNumber = serialNumber;
+        this.serialNumber = CertificateBuildSupport.validateSerialNumber(serialNumber);
         return this;
     }
 

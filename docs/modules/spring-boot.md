@@ -106,9 +106,11 @@ roots and is not an issuer chain. The validator, monitor and health indicator
 all consume the complete list. The `easyPkiKeyStore` bean retains its existing
 primary certificate, private key and ordered chain behavior.
 
-Keep the original truststore file when preserving its aliases or exporting it;
-this loading behavior does not change `Pkcs12Bundle`'s existing single-entry
-trust-only export behavior.
+Exporting this snapshot preserves every certificate. Its additional aliases
+are generated from the primary alias because the Spring snapshot does not
+retain the original aliases for those entries. To preserve aliases from a
+trust-only file when re-exporting, load it directly with `PkiPkcs12.load(...)`;
+see [PKCS#12 alias semantics](core.md#pkcs12).
 
 ## Certificate expiry monitoring
 

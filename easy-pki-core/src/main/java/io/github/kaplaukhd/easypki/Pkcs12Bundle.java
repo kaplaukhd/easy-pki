@@ -29,14 +29,21 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * An in-memory PKCS#12 bundle with one primary entry consisting of:
+ * An in-memory PKCS#12 bundle representing an identity or trusted certificates:
  * <ul>
- *   <li>a leaf certificate ({@link #getCertificate()}),</li>
+ *   <li>a primary certificate ({@link #getCertificate()}),</li>
  *   <li>its private key ({@link #getPrivateKey()}, may be {@code null}
  *       for trust-only bundles), and</li>
- *   <li>the certificate chain above the leaf ({@link #getChain()}
- *       — the leaf is included as the first element).</li>
+ *   <li>the certificate chain for an identity, or every certificate entry for
+ *       a trust-only bundle ({@link #getChain()}). The primary certificate is
+ *       included as the first element.</li>
  * </ul>
+ *
+ * <p>Trust-only bundles export each certificate under a separate alias.
+ * Bundles loaded from a trust-only keystore preserve all certificate entries
+ * and their provider-reported aliases, including repeated certificates under
+ * different aliases. Identity bundles export only their primary key entry
+ * and its certificate chain.
  *
  * <p>Create via {@link PkiPkcs12#create()} or load via
  * {@link PkiPkcs12#load(Path, String)}.
@@ -46,22 +53,23 @@ public final class Pkcs12Bundle {
     private final X509Certificate certificate;
     private final PrivateKey privateKey;
     private final List<X509Certificate> chain;
-    private final String alias;
+    // One alias for an identity; one per chain element for a trust-only bundle.
+    private final List<String> entryAliases;
     private final char[] password;
 
     Pkcs12Bundle(X509Certificate certificate,
                  PrivateKey privateKey,
                  List<X509Certificate> chain,
-                 String alias,
+                 List<String> entryAliases,
                  char[] password) {
         this.certificate = certificate;
         this.privateKey = privateKey;
         this.chain = List.copyOf(chain);
-        this.alias = alias;
+        this.entryAliases = List.copyOf(entryAliases);
         this.password = password.clone();
     }
 
-    /** Returns the primary (leaf) certificate. */
+    /** Returns the primary certificate, which is the leaf for an identity bundle. */
     public X509Certificate getCertificate() {
         return certificate;
     }
@@ -72,16 +80,23 @@ public final class Pkcs12Bundle {
     }
 
     /**
-     * Returns the full certificate chain. The leaf is the first element; any
-     * intermediates and the root follow.
+     * Returns an immutable list containing the primary certificate first.
+     * For an identity, its intermediates and root follow in chain order.
+     * For a trust-only bundle, this contains every certificate entry, without
+     * implying a chain relationship: builder order before export, and
+     * lexicographic alias order after loading. For example, {@code "root-10"}
+     * sorts before {@code "root-2"}. Repeated certificates are retained.
      */
     public List<X509Certificate> getChain() {
         return chain;
     }
 
-    /** Returns the entry alias used inside the keystore. */
+    /**
+     * Returns the primary entry alias. For a loaded trust-only bundle this
+     * is the lexicographically first alias reported by the keystore provider.
+     */
     public String getAlias() {
-        return alias;
+        return entryAliases.get(0);
     }
 
     /** Serialises the bundle to a PKCS#12 byte array. */
@@ -109,9 +124,11 @@ public final class Pkcs12Bundle {
             KeyStore ks = KeyStore.getInstance("PKCS12");
             ks.load(null, null);
             if (privateKey != null) {
-                ks.setKeyEntry(alias, privateKey, password, chain.toArray(new X509Certificate[0]));
+                ks.setKeyEntry(getAlias(), privateKey, password, chain.toArray(new X509Certificate[0]));
             } else {
-                ks.setCertificateEntry(alias, certificate);
+                for (int i = 0; i < chain.size(); i++) {
+                    ks.setCertificateEntry(entryAliases.get(i), chain.get(i));
+                }
             }
             ks.store(out, password);
         } catch (GeneralSecurityException e) {

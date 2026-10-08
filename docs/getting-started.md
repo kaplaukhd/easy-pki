@@ -7,7 +7,20 @@
 
 ## Installation
 
-Depend on only the modules you need.
+This checkout is an unreleased `1.0.0-SNAPSHOT`; its API and validation
+behavior may change before the stable release. Install it locally first:
+
+```bash
+git clone https://github.com/kaplaukhd/easy-pki.git
+cd easy-pki
+mvn clean install
+```
+
+Depend on only the modules you need. These examples use the locally installed
+snapshot. For a published release, choose a version actually available on
+[Maven Central](https://central.sonatype.com/namespace/io.github.kaplaukhd)
+and use it consistently across all modules; a planned release or Git tag alone
+does not make those artifacts available.
 
 === "Maven"
 
@@ -15,22 +28,22 @@ Depend on only the modules you need.
     <dependency>
         <groupId>io.github.kaplaukhd</groupId>
         <artifactId>easy-pki-core</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
     </dependency>
     <dependency>
         <groupId>io.github.kaplaukhd</groupId>
         <artifactId>easy-pki-validation</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
     </dependency>
     <dependency>
         <groupId>io.github.kaplaukhd</groupId>
         <artifactId>easy-pki-spring-boot-starter</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
     </dependency>
     <dependency>
         <groupId>io.github.kaplaukhd</groupId>
         <artifactId>easy-pki-test</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.0-SNAPSHOT</version>
         <scope>test</scope>
     </dependency>
     ```
@@ -38,10 +51,17 @@ Depend on only the modules you need.
 === "Gradle (Kotlin)"
 
     ```kotlin
-    implementation("io.github.kaplaukhd:easy-pki-core:1.0.0")
-    implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0")
-    implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0")
-    testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0")
+    repositories {
+        mavenLocal()    // the source build installed above
+        mavenCentral()  // third-party dependencies
+    }
+
+    dependencies {
+        implementation("io.github.kaplaukhd:easy-pki-core:1.0.0-SNAPSHOT")
+        implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0-SNAPSHOT")
+        implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0-SNAPSHOT")
+        testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0-SNAPSHOT")
+    }
     ```
 
 ---
@@ -76,7 +96,9 @@ X509Certificate root = PkiCertificate.selfSigned()
 
 Defaults applied automatically:
 
-- Random 20-byte positive serial number (RFC 5280 §4.1.2.2).
+- Random positive, nonzero serial number of at most 159 bits (at most
+  20 DER INTEGER value octets, RFC 5280 §4.1.2.2). An explicit
+  `serialNumber(...)` must be between 1 and `2^159 - 1`, inclusive.
 - Signature algorithm `SHA256withRSA` (RSA keys) or `SHA256withECDSA`
   (EC keys).
 - `notBefore = now` if not specified.

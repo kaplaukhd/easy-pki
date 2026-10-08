@@ -58,7 +58,8 @@ public final class Pkcs12Builder {
 
     /**
      * Sets the private key for the leaf certificate. Leave unset for a
-     * trust-only bundle (certificate entry without a key).
+     * trust-only bundle, which exports every supplied certificate as a
+     * separate trusted certificate entry without a key.
      */
     public Pkcs12Builder privateKey(PrivateKey privateKey) {
         this.privateKey = Objects.requireNonNull(privateKey, "privateKey");
@@ -67,7 +68,9 @@ public final class Pkcs12Builder {
 
     /**
      * Adds intermediate and root certificates above the leaf, in chain order.
-     * Multiple calls accumulate.
+     * Multiple calls accumulate. Without a private key, these certificates
+     * become separate trusted certificate entries; no chain relationship is
+     * required or inferred.
      */
     public Pkcs12Builder chain(X509Certificate... chain) {
         Objects.requireNonNull(chain, "chain");
@@ -77,7 +80,10 @@ public final class Pkcs12Builder {
         return this;
     }
 
-    /** Adds chain certificates from an existing list (copied). */
+    /**
+     * Adds chain certificates from an existing list (copied), with the same
+     * trust-only behavior as {@link #chain(X509Certificate...)}.
+     */
     public Pkcs12Builder chain(List<X509Certificate> chain) {
         Objects.requireNonNull(chain, "chain");
         for (X509Certificate c : chain) {
@@ -86,7 +92,13 @@ public final class Pkcs12Builder {
         return this;
     }
 
-    /** Sets the keystore entry alias. Default is {@code "1"}. */
+    /**
+     * Sets the primary keystore entry alias. Default is {@code "1"}.
+     * In a trust-only bundle, subsequent certificates use this alias followed
+     * by {@code "-2"}, {@code "-3"}, and so on, in supplied order. Repeated
+     * certificates retain separate aliases. The keystore provider may
+     * normalize alias case when storing or loading.
+     */
     public Pkcs12Builder alias(String alias) {
         this.alias = Objects.requireNonNull(alias, "alias");
         return this;
@@ -115,9 +127,17 @@ public final class Pkcs12Builder {
         fullChain.add(certificate);
         fullChain.addAll(chainAboveLeaf);
 
+        List<String> entryAliases = new ArrayList<>();
+        entryAliases.add(alias);
+        if (privateKey == null) {
+            for (int i = 1; i < fullChain.size(); i++) {
+                entryAliases.add(alias + "-" + (i + 1));
+            }
+        }
+
         char[] pwd = password.toCharArray();
         try {
-            return new Pkcs12Bundle(certificate, privateKey, fullChain, alias, pwd);
+            return new Pkcs12Bundle(certificate, privateKey, fullChain, entryAliases, pwd);
         } finally {
             Arrays.fill(pwd, '\0');
         }

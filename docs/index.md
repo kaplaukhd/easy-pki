@@ -72,16 +72,22 @@ helpers in the same family of modules.
 
 ## Why easy-pki?
 
-Working with X.509 in Java today means choosing between:
+Java already provides much of the PKI infrastructure:
 
-- **`java.security` / JSSE** — limited, no support for custom OCSP/CRL
-  endpoints, awkward for anything beyond textbook TLS.
+- **`java.security` / JSSE** — provide PKIX validation and path building,
+  OCSP/CRL checking, key stores and TLS. JDK
+  [`PKIXRevocationChecker`](https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/security/cert/PKIXRevocationChecker.html)
+  supports a custom OCSP responder and supplied responses, while `CertStore`
+  supplies CRLs. Applications configure and connect these building blocks.
 - **BouncyCastle** — powerful but low-level. A single self-signed certificate
   requires `X500NameBuilder`, `JcaX509v3CertificateBuilder`, `ContentSigner`,
   a manual conversion back to `X509Certificate`, and forty lines of glue.
 
-`easy-pki` is the missing middle layer — a fluent, discoverable API designed
-for everyday tasks.
+`easy-pki` combines JCA and Bouncy Castle behind a fluent API for everyday
+tasks. The current `1.0.0-SNAPSHOT` is under active development; API and
+validation behavior may change before a stable release. See
+[Getting started](getting-started.md) for local installation and release
+availability, and the [migration guide](migration.md) for behavior changes.
 
 ---
 
@@ -116,7 +122,8 @@ for everyday tasks.
   provider list — your application's security configuration stays untouched.
 - **Fail loudly at the boundary.** Malformed input and missing required fields
   throw clear, actionable exceptions.
-- **Secure defaults.** Minimum RSA 2048. Random 20-byte serials. AES-256-CBC
+- **Secure defaults.** Minimum RSA 2048. Random positive, nonzero serials
+  of at most 159 bits. AES-256-CBC
   for encrypted PKCS#8. SHA-256 signatures.
 - **Interoperable.** Input and output always conform to JCA types — drop down
   to standard APIs when needed.

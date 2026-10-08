@@ -37,6 +37,12 @@ import java.util.Objects;
 /**
  * Entry point for PKCS#12 keystore creation and loading.
  *
+ * <p>Loading a trust-only keystore retains every certificate entry and its
+ * provider-reported alias, in lexicographic alias order. The first alias is
+ * the primary entry. If a key entry exists, loading instead selects the
+ * first key entry in provider enumeration order and its certificate chain;
+ * other entries are not included in the identity bundle.
+ *
  * <h2>Create</h2>
  * <pre>{@code
  * Pkcs12Bundle bundle = PkiPkcs12.create()
@@ -107,6 +113,10 @@ public final class PkiPkcs12 {
             }
 
             String alias = findPrimaryAlias(ks);
+            if (ks.isCertificateEntry(alias)) {
+                return loadTrustedCertificates(ks, pwd);
+            }
+
             Certificate[] rawChain = ks.getCertificateChain(alias);
             X509Certificate leafCert;
             List<X509Certificate> chain;
@@ -114,7 +124,7 @@ public final class PkiPkcs12 {
                 chain = toX509Chain(rawChain);
                 leafCert = chain.get(0);
             } else {
-                // Certificate-only entry (no private key).
+                // Fall back to the primary certificate if the key has no chain.
                 Certificate c = ks.getCertificate(alias);
                 leafCert = asX509(c);
                 chain = Collections.singletonList(leafCert);
@@ -132,7 +142,7 @@ public final class PkiPkcs12 {
                 }
             }
 
-            return new Pkcs12Bundle(leafCert, privateKey, chain, alias, pwd);
+            return new Pkcs12Bundle(leafCert, privateKey, chain, List.of(alias), pwd);
         } catch (UnrecoverableKeyException e) {
             throw new IllegalArgumentException("Wrong PKCS#12 key password", e);
         } catch (GeneralSecurityException e) {
@@ -140,6 +150,25 @@ public final class PkiPkcs12 {
         } finally {
             java.util.Arrays.fill(pwd, '\0');
         }
+    }
+
+    private static Pkcs12Bundle loadTrustedCertificates(KeyStore ks, char[] password)
+            throws GeneralSecurityException {
+        List<String> entryAliases = new ArrayList<>();
+        Enumeration<String> aliases = ks.aliases();
+        while (aliases.hasMoreElements()) {
+            String alias = aliases.nextElement();
+            if (ks.isCertificateEntry(alias)) {
+                entryAliases.add(alias);
+            }
+        }
+        Collections.sort(entryAliases);
+
+        List<X509Certificate> certificates = new ArrayList<>(entryAliases.size());
+        for (String alias : entryAliases) {
+            certificates.add(asX509(ks.getCertificate(alias)));
+        }
+        return new Pkcs12Bundle(certificates.get(0), null, certificates, entryAliases, password);
     }
 
     private static String findPrimaryAlias(KeyStore ks) throws GeneralSecurityException {

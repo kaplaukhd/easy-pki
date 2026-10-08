@@ -23,6 +23,7 @@ import java.security.Key;
 import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Objects;
 
 import org.bouncycastle.cert.X509CertificateHolder;
 
@@ -33,20 +34,41 @@ import org.bouncycastle.cert.X509CertificateHolder;
 final class CertificateBuildSupport {
 
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
-    private static final int SERIAL_NUMBER_BYTES = 20;
+    private static final int SERIAL_NUMBER_BITS = 159;
 
     private CertificateBuildSupport() {
         // Utility class.
     }
 
     /**
-     * Generates a fresh random, positive, 20-byte serial number as recommended
-     * by RFC 5280 §4.1.2.2.
+     * Generates a fresh random, nonzero positive serial number whose DER
+     * INTEGER value fits in 20 octets (RFC 5280 §4.1.2.2).
      */
     static BigInteger randomSerial() {
-        byte[] bytes = new byte[SERIAL_NUMBER_BYTES];
-        SECURE_RANDOM.nextBytes(bytes);
-        return new BigInteger(1, bytes); // signum=1 → always positive
+        return randomSerial(SECURE_RANDOM);
+    }
+
+    static BigInteger randomSerial(SecureRandom random) {
+        BigInteger serial;
+        do {
+            // Reserve the sign bit so DER never needs a 21st value octet.
+            serial = new BigInteger(SERIAL_NUMBER_BITS, random);
+        } while (serial.signum() == 0);
+        return serial;
+    }
+
+    static BigInteger validateSerialNumber(BigInteger serialNumber) {
+        Objects.requireNonNull(serialNumber, "serialNumber");
+        if (serialNumber.signum() <= 0) {
+            throw new IllegalArgumentException(
+                    "serialNumber must be positive, got " + serialNumber);
+        }
+        if (serialNumber.bitLength() > SERIAL_NUMBER_BITS) {
+            throw new IllegalArgumentException(
+                    "serialNumber must be at most 159 bits (20 DER value octets), got "
+                            + serialNumber.bitLength() + " bits");
+        }
+        return serialNumber;
     }
 
     /**
