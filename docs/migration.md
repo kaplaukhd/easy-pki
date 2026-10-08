@@ -5,6 +5,25 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### JSSE and SSL Bundles
+
+`easy-pki-tls` is an additional module. Create a managed context with
+`PkiTls.builder().identity(...).trust(...).peerPolicy(...).build()`; omit identity
+for a client that does not present a certificate. Trust and revocation behavior
+are explicit. TLS peer checks require role EKU, digitalSignature and a matching
+DNS/IP SAN for servers; CN-only identities are not accepted. Identity keys must
+be available as JCA `PrivateKey` handles usable by the installed provider.
+
+Use `reloadIdentity`, `reloadTrust` or a paired `reload` on the same context.
+Previously created sockets/engines retain their original generation; drain
+connections if removing trust must also terminate established access. See the
+[TLS guide](modules/tls.md) for the session and callback boundaries.
+
+Spring SSL Bundle registration is opt-in and keeps existing validator/store
+properties separate. It uses a Tomcat JSSE adapter and supports Boot RestClient
+consumption; see the [Spring guide](modules/spring-boot.md). The snapshot monitor
+and health indicator are not automatically retargeted to rotated identities.
+
 ### Additive CSR workflow
 
 `PkiCsr.create()` adds PKCS#10 creation with the existing DN/SAN builders,

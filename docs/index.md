@@ -103,6 +103,10 @@ availability, and the [migration guide](migration.md) for behavior changes.
 
     Chain validation, OCSP, CRL (static + HTTP auto-fetch), chain building.
 
+- :material-lock: **[`easy-pki-tls`](modules/tls.md)**
+
+    JSSE adapters, explicit peer validation and atomic identity/trust rotation.
+
 - :material-leaf: **[`easy-pki-spring-boot-starter`](modules/spring-boot.md)**
 
     Auto-configuration, expiry monitor, Actuator health, mTLS filter.

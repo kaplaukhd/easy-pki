@@ -10,7 +10,7 @@ the [`central-publishing-maven-plugin`](https://central.sonatype.org/publish/pub
 Coordinates:
 
 - **groupId:** `io.github.kaplaukhd`
-- **Artifacts:** `easy-pki-core`, `easy-pki-validation`,
+- **Artifacts:** `easy-pki-core`, `easy-pki-validation`, `easy-pki-tls`,
   `easy-pki-spring-boot-starter`, `easy-pki-test`
 
 ## One-time setup
@@ -89,7 +89,7 @@ Each module should produce three JARs:
 Inspect them quickly:
 
 ```bash
-for m in easy-pki-core easy-pki-validation easy-pki-spring-boot-starter easy-pki-test; do
+for m in easy-pki-core easy-pki-validation easy-pki-tls easy-pki-spring-boot-starter easy-pki-test; do
     ls -la $m/target/*.jar
 done
 ```

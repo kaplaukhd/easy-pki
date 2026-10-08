@@ -1,1 +1,2 @@
 io.github.kaplaukhd.easypki.spring.EasyPkiAutoConfiguration
+io.github.kaplaukhd.easypki.spring.EasyPkiSslAutoConfiguration

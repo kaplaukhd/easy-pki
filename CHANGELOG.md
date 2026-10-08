@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **JSSE integration:** new `easy-pki-tls` module with explicit identity/trust,
+  immutable manager/store snapshots, SAN-only DNS/IP server identity checks,
+  TLS role enforcement and explicit disabled/offline-CRL revocation policies.
+  JCA key handles are used without private-key serialization; signer-only
+  identities fail clearly at the JSSE boundary.
+- **Atomic TLS rotation:** `ReloadableTlsContext` validates and publishes whole
+  identity/trust generations with fresh session state. Stable factories, server
+  listeners and engines capture one generation per connection. Failed updates
+  preserve the active material; existing connections retain their generation.
+- **Spring SSL Bundles:** opt-in named bundles reuse existing stores or an
+  application-managed TLS context. Tomcat JSSE and RestClient integrations
+  preserve the peer policy and pick up updates on new connections. Existing
+  validator, servlet-filter and monitoring behavior stays separately configured.
 - **CSR creation:** add `PkiCsr.create()` and `CsrBuilder` with
   JCA-preserving subject input, opt-in SAN/BC/KU/EKU requests and custom DER
   extension values. Key-pair and external `PkiSigner` routes support

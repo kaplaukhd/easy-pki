@@ -117,6 +117,153 @@ The general [TrustBundle loaders](core.md#explicit-trust-bundles) also support
 PEM and JKS for application-managed trust. The starter's automatic file loading
 continues to use its existing PKCS#12 properties and named bundle bean.
 
+## Named SSL bundles
+
+The starter can register an `EasyPkiSslBundle` backed by the
+`easy-pki-tls` module's `ReloadableTlsContext`. Registration is opt-in:
+existing key-store, trust-store and validator settings alone do not enable TLS.
+This example uses the configured stores for a Tomcat HTTPS server requiring
+client certificates:
+
+```yaml
+easy-pki:
+  key-store:
+    path: file:/etc/ssl/server.p12
+    password: ${SERVER_KEYSTORE_PASSWORD}
+  trust-store:
+    path: file:/etc/ssl/client-roots.p12
+    password: ${CLIENT_TRUSTSTORE_PASSWORD}
+  ssl:
+    bundle-name: application
+    revocation-mode: disabled # explicit TLS policy choice
+
+server:
+  port: 8443
+  ssl:
+    bundle: application
+    client-auth: need
+```
+
+The key store must contain a valid TLS identity: an end-entity certificate,
+its matching JCA private key and ordered presentation chain, with explicit
+digitalSignature KU and the appropriate serverAuth/clientAuth EKU. The trust
+store supplies only explicitly trusted certificate entries. The identity
+chain never supplies peer trust, and missing trust does not fall back to the
+JVM's root store. A client-only bundle may omit the key store; the Tomcat server
+requires an identity. Existing qualified store bean overrides remain effective.
+
+TLS peer policy is separate from `easy-pki.validation.mode`. For store-derived
+TLS material, explicitly select `easy-pki.ssl.revocation-mode=disabled` or
+supply one `TlsPeerPolicy` bean. Supplying both is rejected. Disabling revocation
+retains PKIX, current validity, TLS usage and server SAN checks. To require
+offline CRL evidence, omit the property and provide, for example:
+
+```java
+@Bean
+TlsPeerPolicy tlsPeerPolicy(X509CRL currentCrl) {
+    return TlsPeerPolicy.withCrls(currentCrl);
+}
+```
+
+The supplied CRLs must cover the certificates below the selected trust anchor;
+missing, stale, invalid or unsupported evidence fails the handshake. This
+integration does not enable OCSP, network CRL retrieval or file watching.
+
+### Use a bundle from a Spring REST client
+
+Configure the client's named bundle with trust for the server, and a client
+identity when the server requires mTLS. Spring Boot's `RestClientSsl` applies
+the bundle to a supported request factory:
+
+```java
+@Bean
+RestClient serviceClient(RestClient.Builder builder, RestClientSsl ssl) {
+    return builder
+        .baseUrl("https://service.example.com:8443")
+        .apply(ssl.fromBundle("application"))
+        .build();
+}
+```
+
+`RestClientSsl` is in `org.springframework.boot.autoconfigure.web.client`;
+`RestClient` is in `org.springframework.web.client`. Applying the SSL bundle
+replaces an existing request factory. The tested Boot 3.3.5 default Java
+connection factory uses the live TLS context. The peer must present a matching
+DNS/IP SAN; Common Name fallback is disabled. TLS client-certificate acceptance
+does not authorize access to application resources.
+
+### Application-owned TLS material
+
+Provide a `ReloadableTlsContext` bean to use application-managed identity,
+trust and peer policy instead of creating TLS material from the configured
+stores. With such a bean, `easy-pki.ssl.bundle-name` is sufficient; its peer
+policy has already been explicitly chosen:
+
+```java
+@Bean
+ReloadableTlsContext applicationTls(PkiIdentity localIdentity, TrustBundle peerTrust) {
+    return PkiTls.builder()
+        .identity(localIdentity)
+        .trust(peerTrust)
+        .peerPolicy(TlsPeerPolicy.withoutRevocationChecks())
+        .build();
+}
+```
+
+The TLS types are in `io.github.kaplaukhd.easypki.tls`. Identity is optional
+for clients; explicit trust and peer policy are required. An explicitly empty
+`TrustBundle` rejects all peer certificates. A `PkiSigner` alone is insufficient
+for JSSE: the identity needs a JCA `PrivateKey` handle usable by the installed
+providers. The adapter retains that handle without exporting it or changing
+global provider/default SSL configuration.
+
+For several named bundles, applications can declare `SslBundleRegistrar`
+beans and call `registry.registerBundle(name, EasyPkiSslBundle.of(material))`.
+The starter uses Boot's default registry without replacing other bundles;
+duplicate names fail startup. If the application provides `SslBundles` or
+`SslBundleRegistry`, automatic easy-pki registration backs off entirely and
+the application owns registration. An application may also supply its own
+`EasyPkiSslBundle` bean or replace the named `easyPkiSslBundleRegistrar` bean.
+
+### Reload and container lifecycle
+
+Keep the named bundle registered and update its original TLS context:
+
+```java
+applicationTls.reloadIdentity(replacementIdentity);
+applicationTls.reloadTrust(replacementPeerTrust);
+applicationTls.reload(replacementIdentity, replacementPeerTrust); // one generation
+```
+
+Preparation checks the candidate material before publication. A failed update
+retains the active generation. New engines/sockets capture complete identity
+and trust generations; existing connections and in-progress handshakes retain
+their selected generation. Connection pools may reuse existing connections,
+so publication does not forcibly reauthenticate them. Each successful reload
+uses new underlying JSSE contexts and their session caches; see the TLS
+module's contract for session and connection behavior.
+
+Boot 3.3.5 normally configures Tomcat from stores, which bypasses custom
+managers. The starter installs the live easy-pki context through Tomcat's public
+connector hook for selected easy-pki bundles, including named SNI entries.
+This integration requires Tomcat's JSSE implementation and rejects an explicitly
+configured alternative implementation. It preserves the custom TLS peer policy,
+including offline CRL checks, and lets new handshakes use reloaded material.
+Tomcat remains optional for applications using only clients.
+
+Use the context's reload methods instead of `SslBundleRegistry.updateBundle`.
+The integration does not issue registry update events or promise transactional
+updates across arbitrary Spring bundle consumers. `createSslContext()` returns
+the live context; `getStores()` and `getManagers()` expose fixed snapshots at
+the time of each call. Consumers retaining those snapshots need their own
+refresh lifecycle. Automatic reload is tested with JSSE Tomcat and the Spring
+REST client path above; other containers/backends require separate validation.
+
+The existing monitor and health indicator continue to report their configured
+PKCS#12 snapshots. They are not automatically switched to rotated TLS material.
+The starter does not close application-owned key handles or contexts, and
+changes to store files do not trigger reloads.
+
 ## Certificate expiry monitoring
 
 Activate with `easy-pki.monitoring.enabled=true`. The starter registers

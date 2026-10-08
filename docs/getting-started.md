@@ -37,6 +37,11 @@ does not make those artifacts available.
     </dependency>
     <dependency>
         <groupId>io.github.kaplaukhd</groupId>
+        <artifactId>easy-pki-tls</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </dependency>
+    <dependency>
+        <groupId>io.github.kaplaukhd</groupId>
         <artifactId>easy-pki-spring-boot-starter</artifactId>
         <version>1.0.0-SNAPSHOT</version>
     </dependency>
@@ -59,6 +64,7 @@ does not make those artifacts available.
     dependencies {
         implementation("io.github.kaplaukhd:easy-pki-core:1.0.0-SNAPSHOT")
         implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0-SNAPSHOT")
+        implementation("io.github.kaplaukhd:easy-pki-tls:1.0.0-SNAPSHOT")
         implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0-SNAPSHOT")
         testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0-SNAPSHOT")
     }

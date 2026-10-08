@@ -142,6 +142,11 @@ and use the same version for all easy-pki modules.
 </dependency>
 <dependency>
     <groupId>io.github.kaplaukhd</groupId>
+    <artifactId>easy-pki-tls</artifactId>
+    <version>1.0.0-SNAPSHOT</version>
+</dependency>
+<dependency>
+    <groupId>io.github.kaplaukhd</groupId>
     <artifactId>easy-pki-spring-boot-starter</artifactId>
     <version>1.0.0-SNAPSHOT</version>
 </dependency>
@@ -164,6 +169,7 @@ repositories {
 dependencies {
     implementation("io.github.kaplaukhd:easy-pki-core:1.0.0-SNAPSHOT")
     implementation("io.github.kaplaukhd:easy-pki-validation:1.0.0-SNAPSHOT")
+    implementation("io.github.kaplaukhd:easy-pki-tls:1.0.0-SNAPSHOT")
     implementation("io.github.kaplaukhd:easy-pki-spring-boot-starter:1.0.0-SNAPSHOT")
     testImplementation("io.github.kaplaukhd:easy-pki-test:1.0.0-SNAPSHOT")
 }
@@ -177,6 +183,7 @@ dependencies {
 |---|---|
 | [`easy-pki-core`](easy-pki-core/) | Key generation, certificate builders, PEM/DER I/O, PKCS#12, inspection |
 | [`easy-pki-validation`](easy-pki-validation/) | Chain validation, OCSP, CRL (static + HTTP auto-fetch), chain building |
+| [`easy-pki-tls`](easy-pki-tls/) | JSSE adapters, explicit peer policy, atomic identity/trust rotation |
 | [`easy-pki-spring-boot-starter`](easy-pki-spring-boot-starter/) | Auto-configuration, expiry monitor, Actuator health, mTLS filter |
 | [`easy-pki-test`](easy-pki-test/) | In-memory CA hierarchy, OCSP responder, JUnit 5 extension |
 
@@ -526,6 +533,8 @@ class MyServiceTest {
 | CRL | `.crl(...)` — complete direct unpartitioned CRLs; static or HTTP fetch with TTL cache + proxy; unsupported forms reported explicitly |
 | Fallback | `.ocspWithCrlFallback()` — OCSP first, CRL on failure |
 | Chain building | `ChainBuilder.of(cert).intermediates(...).trustStore(...).build()` |
+| TLS and rotation | [`PkiTls`](docs/modules/tls.md) — JSSE managers/context, SAN verification, explicit revocation policy and atomic updates |
+| SSL Bundles | Opt-in named Spring bundles for Tomcat JSSE and RestClient |
 | Spring Boot | `EasyPkiValidator`, `CertificateMonitor`, `EasyPkiHealthIndicator`, `EasyPkiClientCertFilter` |
 | Tests | `TestPki`, `TestOcspResponder`, `@InjectTestPki`, JUnit 5 extension |
 

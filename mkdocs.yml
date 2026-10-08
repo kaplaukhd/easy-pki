@@ -43,6 +43,7 @@ nav:
   - Modules:
       - Core: modules/core.md
       - Validation: modules/validation.md
+      - TLS and rotation: modules/tls.md
       - Spring Boot starter: modules/spring-boot.md
       - Test helpers: modules/testing.md
   - Cookbook: cookbook.md
