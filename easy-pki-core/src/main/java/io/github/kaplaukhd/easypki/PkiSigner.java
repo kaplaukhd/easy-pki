@@ -34,8 +34,10 @@ import java.util.Objects;
  * {@code RSASSA-PSS} and declares its parameters through
  * {@link #signatureParameters()}.
  *
- * <p>Builders provide the complete DER-encoded TBSCertificate, not a digest;
- * identity validation may supply a fresh challenge to prove key possession.
+ * <p>Certificate builders provide the complete DER-encoded TBSCertificate;
+ * CSR builders provide the DER-encoded CertificationRequestInfo. These are
+ * complete messages, not digests. Identity validation may supply a fresh
+ * challenge to prove key possession.
  * Implementations own hashing and signing, must use the intended signing key,
  * and must keep their algorithm stable. A signer may be reused across builds;
  * its implementation defines concurrency and backend-resource lifetime.

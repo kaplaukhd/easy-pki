@@ -5,6 +5,28 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### Additive CSR workflow
+
+`PkiCsr.create()` adds PKCS#10 creation with the existing DN/SAN builders,
+key-pair adapters and `PkiSigner` backends. It returns an immutable `CsrRequest`
+with PEM/DER export and verifies the newly produced signature. Existing
+certificate builders keep their behavior; no CSR workflow is selected implicitly.
+
+`PkiCsr.fromPem/fromDer/fromFile` strictly parse one request without verifying
+its signature. Use `verifySignature()` or `requireValidSignature()` for proof
+of key possession. Requested extensions and other attributes remain inspectable;
+`getAttributes()` excludes the decoded `extensionRequest` attribute.
+
+`PkiCsr.issue(request, policy)` requires a `CsrIssuancePolicy`, an issuing
+`PkiIdentity` and explicit validity. Policies deny subjects/SANs until supplied
+predicates authorize them, apply minimum cryptographic strength and reject
+unknown extensions and other CSR attributes. Intermediate issuance additionally
+requires `allowCaRequests(maximumPathLength)`. Certificate profiles rebuild
+approved extensions and run known-chain issuer preflight before signing.
+A valid CSR signature does not authorize names or grant CA authority. See the
+[CSR guide](modules/core.md#certificate-signing-requests) for complete examples,
+strict input rules and callback ownership.
+
 ### Opt-in certificate profiles
 
 New `rootCa()`, `intermediateCa()`, `tlsServer()` and `tlsClient()` entry points

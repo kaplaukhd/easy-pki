@@ -505,6 +505,8 @@ class MyServiceTest {
 | Self-signed certs | `PkiCertificate.selfSigned()...build()` |
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
 | Issuance profiles | `rootCa()` · `intermediateCa()` · `tlsServer()` · `tlsClient()` — role defaults and checks before signing |
+| [PKCS#10 requests](docs/modules/core.md#certificate-signing-requests) | `PkiCsr.create()` · PEM/DER read/export · immutable `CsrRequest` inspection and signature verification |
+| [CSR issuance](docs/modules/core.md#issue-under-an-explicit-ca-policy) | `PkiCsr.issue(request, policy)` — explicit subject/SAN authorization, bounded CA permission and issuer profile preflight |
 | Signing backend | `PkiSigner` — JCA provider selection or external signing, without exporting private keys |
 | Identity | `PkiIdentity` — signing handle, leaf and ordered chain; key possession checked without export |
 | Trust | `TrustBundle` — explicit anchors from PEM/JKS/PKCS#12, immutable snapshots and merging |

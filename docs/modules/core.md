@@ -192,6 +192,238 @@ profiles use `selfSigned().profile(CertificateProfile.TLS_SERVER)` or
 `TLS_CLIENT` and always require a nonempty subject, because it is also the issuer.
 Ordinary unprofiled builders keep their previous settings and SAN behavior.
 
+## Certificate signing requests
+
+`PkiCsr` separates creating a PKCS#10 request, inspecting its contents,
+verifying its signature and authorizing certificate issuance. A valid CSR
+signature proves possession of its public key. Subject names, SANs, requested
+usages and CA flags still require the issuer's authorization.
+
+### Create and export a CSR
+
+```java
+KeyPair applicantKeys = PkiKeys.ec(Curve.P_256);
+CsrRequest request = PkiCsr.create()
+    .subject("CN=api.example.com,O=Example")
+    .keyPair(applicantKeys)
+    .san(s -> s.dns("api.example.com"))
+    .keyUsage(KeyUsage.DIGITAL_SIGNATURE)
+    .extendedKeyUsage(ExtendedKeyUsage.TLS_SERVER)
+    .build();
+
+String requestPem = request.toPem();
+byte[] requestDer = request.toDer();
+Files.writeString(Path.of("api.csr.pem"), requestPem, StandardCharsets.UTF_8);
+Files.write(Path.of("api.csr.der"), requestDer);
+```
+
+Use the core package `io.github.kaplaukhd.easypki` and the standard JCA,
+`java.nio.file`, `java.nio.charset` and `java.time` types in these examples.
+File operations use the standard `IOException` contract.
+
+The subject and signing key are required. `subject("")` explicitly requests an
+empty subject; omission is an error. String, `X500Principal` and
+`Consumer<DnBuilder>` overloads follow the [DN contract](#subject-dn), including
+literal escaping and principal DER preservation. SAN helpers accept DNS, IP,
+email and URI entries and reject non-ASCII original text before signing; use
+ASCII A-labels for international DNS names. Profile-specific name syntax is
+checked separately during issuance.
+
+`keyPair(...)` uses RSA/ECDSA SHA-256 or Ed25519 defaults, with an optional
+`signatureAlgorithm(...)` override. An external signer replaces the key pair
+and owns its algorithm and parameters:
+
+```java
+CsrRequest externalRequest = PkiCsr.create()
+    .subject("CN=api.example.com,O=Example")
+    .signer(applicantKeys.getPublic(), PkiSigner.jca(applicantKeys.getPrivate()))
+    .san(s -> s.dns("api.example.com"))
+    .build();
+```
+
+The same route accepts an opaque JCA key handle with an explicit provider, or a
+custom `PkiSigner`. It receives the complete DER `CertificationRequestInfo`,
+not a digest, and requires no private-key export. RSA, EC, Ed25519 and explicit
+RSA-PSS signing are supported. Each build verifies the signature against the
+embedded public key, so a signer for a different key cannot return a successful
+request. See the [signer contract](#signing-without-exporting-private-keys) for
+provider selection, algorithm ownership and backend lifetime.
+
+All requested extensions are opt-in: `san(...)`, `keyUsage(...)`,
+`extendedKeyUsage(...)`, `isCA(boolean)` and `pathLength(int)`. No SKI, AKI,
+BasicConstraints, KU or EKU is added automatically. `pathLength(...)` implies
+`isCA(true)`; a later contradictory `isCA(false)` is rejected. The helpers mark
+BC and KU critical and SAN/EKU noncritical. KU/EKU calls accumulate distinct
+values; SAN calls preserve order and duplicates. When present, extensions are
+encoded in one PKCS#9 `extensionRequest` attribute containing exactly one value.
+
+`extension(new CsrExtension(oid, critical, innerDer))` adds a custom request
+extension. `innerDer` is one canonical DER value inside the extension's OCTET
+STRING, without that wrapper. Duplicate OIDs, including collisions with a
+fluent helper, are rejected. Such a request can be exported for another issuer;
+the built-in issuance policy below rejects all unknown extension OIDs.
+
+### Read, inspect and verify
+
+```java
+CsrRequest received = PkiCsr.fromPem(requestPem);
+CsrRequest fromDer = PkiCsr.fromDer(requestDer);
+CsrRequest fromFile = PkiCsr.fromFile(Path.of("api.csr.pem")); // PEM or DER
+
+X500Principal requestedSubject = received.getSubject();
+PublicKey requestedKey = received.getPublicKey();
+List<CsrExtension> requestedExtensions = received.getRequestedExtensions();
+List<CsrAttribute> otherAttributes = received.getAttributes();
+
+for (CsrExtension extension : requestedExtensions) {
+    String oid = extension.getOid();
+    boolean critical = extension.isCritical();
+    byte[] innerValue = extension.getValue();
+}
+for (CsrAttribute attribute : otherAttributes) {
+    String oid = attribute.getOid();
+    List<byte[]> encodedValues = attribute.getValues();
+}
+
+boolean signatureValid = received.verifySignature();
+received.requireValidSignature(); // throws IllegalArgumentException if invalid/unsupported
+```
+
+Parsing does not verify the signature. Readers require exactly one canonical
+DER request, or one PEM block labelled `CERTIFICATE REQUEST` or
+`NEW CERTIFICATE REQUEST`. They reject malformed or truncated structure,
+trailing data, other PEM objects, duplicate `extensionRequest` attributes,
+multiple values in that attribute and duplicate requested extension OIDs.
+Only whitespace may surround a PEM block. `fromPem(Reader)` and
+`fromPem(InputStream)` close their input; stream PEM is UTF-8. Matching static
+readers are also available on `CsrRequest`. Parse failures use
+`IllegalArgumentException`; file/stream failures use `UncheckedIOException`.
+
+The request, extension and attribute models keep defensive byte copies and
+unmodifiable collections. `toDer()` preserves the original request encoding.
+Unknown requested extensions remain inspectable through their OID, critical
+flag and opaque inner bytes; reading does not approve their extension syntax.
+`getAttributes()` contains other attributes and excludes the decoded
+`extensionRequest`; each attribute value is a complete DER value. Unknown
+attributes and extensions remain covered by the signature and the DER export.
+
+Signature verification uses the embedded public key and encoded algorithm
+parameters through the host JCA providers, without global provider registration.
+RSA-PSS verification honors its digest, MGF1 digest, salt length and trailer
+field. `verifySignature()` returns `false` for invalid signatures or unsupported
+algorithms/parameters; `requireValidSignature()` throws in those cases. These
+operations perform no ownership, identity or trust validation.
+
+### Issue under an explicit CA policy
+
+This example authorizes one exact subject and DNS SAN, then issues using an
+application-controlled CA identity. Replace the example authorization values
+with names authorized by your enrollment process.
+
+```java
+KeyPair caKeys = PkiKeys.ed25519();
+Instant issuanceTime = Instant.now();
+X509Certificate caCertificate = PkiCertificate.rootCa()
+    .subject("CN=Example Issuing Root")
+    .keyPair(caKeys)
+    .pathLength(1)
+    .validFrom(issuanceTime)
+    .validFor(Duration.ofDays(3650))
+    .build();
+PkiIdentity caIdentity = PkiIdentity.of(caCertificate, caKeys.getPrivate());
+
+X500Principal allowedSubject = new X500Principal("CN=api.example.com,O=Example");
+CsrIssuancePolicy serverPolicy = CsrIssuancePolicy
+    .forProfile(CertificateProfile.TLS_SERVER)
+    .allowSubject(allowedSubject::equals)
+    .allowSan(name -> name.type() == SubjectAlternativeName.Type.DNS
+        && name.value().equals("api.example.com"))
+    .build();
+
+X509Certificate issued = PkiCsr.issue(received, serverPolicy)
+    .issuer(caIdentity)
+    .validFrom(issuanceTime)
+    .validFor(Duration.ofDays(90))
+    .build();
+issued.verify(caCertificate.getPublicKey());
+```
+
+`TLS_SERVER`, `TLS_CLIENT` and `INTERMEDIATE_CA` are the available issuance
+profiles; `ROOT_CA` is rejected. Subject and SAN authorization default to deny.
+The subject predicate runs even for an empty DN, and every requested SAN must
+pass its predicate. IP SAN callbacks receive canonical numeric literals, preserving
+the IPv4/IPv6 address family, including IPv4-mapped IPv6 requests.
+An omitted SAN needs no callback approval, but the selected profile's identity
+requirements still apply. `allowPublicKey(predicate)` adds application-specific
+restrictions to the fixed minimum key-strength rules. Each setter replaces its
+corresponding callback; `build()` snapshots callback references into the policy.
+Captured mutable state remains application-owned, and callbacks must support
+the application's concurrency model. They run again on every issuance.
+
+Issuance requires a valid CSR signature, RSA keys of at least 2048 bits, EC
+field and order sizes of at least 256 bits, or Ed25519. CSR signatures must use
+SHA-256/384/512 with RSA or ECDSA, Ed25519, or RSA-PSS with SHA-256/384/512 for
+both its message and MGF1 digests. A request readable or verifiable for inspection
+can still fail these stricter issuance rules.
+
+Only BasicConstraints, KeyUsage, ExtendedKeyUsage and SAN requests are supported
+for issuance. Their inner DER must match the extension schema, including tagging,
+default-field omission and minimal named-bit encoding. Profile compatibility is
+checked; unknown
+extensions are rejected regardless of criticality, and all other CSR attributes
+are rejected. The certificate profile rebuilds approved extensions and their
+critical flags, adds its mandatory BC/KU/EKU settings and derives SKI/AKI. It
+does not copy an unfiltered extension list. Thus a CA request fails a TLS policy,
+and a client profile cannot acquire serverAuth through a CSR.
+
+The issuer chooses validity, serial and certificate-signing algorithm. Supply
+`issuer(PkiIdentity)` and either `validFor(...)` or `validUntil(...)`; the last
+validity-end setter wins. `validFrom(...)` defaults to the start of `build()`.
+Serials default to random positive values in `1..2^159-1`, with an optional
+validated `serialNumber(BigInteger)` override. The issuer's signer owns the
+certificate-signing algorithm, independently of the CSR signature. The CSR
+issuance builder has no subject, key or extension override after authorization.
+
+Proof, request authorization and [issuer profile preflight](#issuer-preflight-and-validity)
+complete before requesting the certificate signature. The known issuer chain
+supplies validity, CA, path-length and supported-constraint checks; missing
+ancestors are not discovered. Returned certificates are signature-verified.
+Creating `PkiIdentity` separately already performs its key-possession challenge.
+Issuance establishes no PKIX trust, revocation status, DNS/mailbox ownership or
+public Web PKI compliance.
+
+### Explicit intermediate CA permission
+
+CA issuance requires a separate intermediate policy and a finite path budget:
+
+```java
+KeyPair intermediateKeys = PkiKeys.ec(Curve.P_256);
+CsrRequest intermediateRequest = PkiCsr.create()
+    .subject("CN=Example Intermediate CA")
+    .keyPair(intermediateKeys)
+    .pathLength(0)
+    .keyUsage(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN)
+    .build();
+
+CsrIssuancePolicy intermediatePolicy = CsrIssuancePolicy
+    .forProfile(CertificateProfile.INTERMEDIATE_CA)
+    .allowSubject(new X500Principal("CN=Example Intermediate CA")::equals)
+    .allowCaRequests(0)
+    .build();
+
+X509Certificate intermediateCertificate = PkiCsr.issue(intermediateRequest, intermediatePolicy)
+    .issuer(caIdentity)
+    .validFrom(issuanceTime)
+    .validFor(Duration.ofDays(365))
+    .build();
+```
+
+`allowCaRequests(maximumPathLength)` is required for an intermediate policy and
+is unavailable on TLS policies. A smaller requested path limit is retained;
+an omitted limit uses the policy maximum, while a larger limit is rejected.
+The issuer chain must also permit that path budget. The CSR's own CA flag or
+keyCertSign bit never supplies this authorization.
+
 ## Signing without exporting private keys
 
 Both certificate builders use `PkiSigner`. The existing `.keyPair(...)` and
@@ -236,7 +468,8 @@ PkiSigner signer = new PkiSigner() {
 };
 ```
 
-The backend receives the **complete DER TBSCertificate**, not a digest; it
+Certificate builders supply the **complete DER TBSCertificate**; CSR builders
+supply the **complete DER CertificationRequestInfo**. Neither is a digest. The backend
 performs the declared hashing/signing operation and returns the X.509 signature
 bytes. ECDSA must return DER `(r, s)`, not raw `r || s`; do not return a CMS
 wrapper. The name must have an X.509 algorithm mapping in the bundled BC version,

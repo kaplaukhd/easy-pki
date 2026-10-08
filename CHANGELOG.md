@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **CSR creation:** add `PkiCsr.create()` and `CsrBuilder` with
+  JCA-preserving subject input, opt-in SAN/BC/KU/EKU requests and custom DER
+  extension values. Key-pair and external `PkiSigner` routes support
+  RSA/EC/Ed25519 and parameterized RSA-PSS without private-key export.
+  Every build verifies the signature against the embedded public key.
+- **CSR reading and inspection:** add strict single-request PEM/DER
+  readers and immutable `CsrRequest`, `CsrExtension` and `CsrAttribute` models.
+  Unknown extensions and attributes remain inspectable; malformed structure,
+  trailing content and ambiguous extension requests are rejected. Reading
+  preserves the DER request and does not imply signature validity.
+- **CSR proof verification:** verify the signed request with its
+  embedded public key and encoded signature parameters, including explicit
+  RSA-PSS parameters. `verifySignature()` reports invalid or unsupported
+  proofs; `requireValidSignature()` rejects them. Proof establishes key
+  possession, not identity, trust or issuance authorization.
+- **Policy-controlled CSR issuance:** add `CsrIssuancePolicy` and
+  `PkiCsr.issue(...)` with explicit subject/every-SAN authorization, fixed
+  cryptographic minimums and finite opt-in intermediate CA path budgets.
+  Unknown requested extensions and other attributes are rejected; approved
+  BC/KU/EKU/SAN values are rebuilt under certificate profiles. The issuer owns
+  validity, serial and signing algorithm; proof, policy and known-chain profile
+  checks finish before the certificate signature is requested.
+
 ### Changed
 - **Opt-in CA/TLS profiles:** add `CertificateProfile` and
   `PkiCertificate.rootCa()`, `intermediateCa()`, `tlsServer()` and `tlsClient()`.
