@@ -59,7 +59,7 @@ import org.bouncycastle.operator.ContentSigner;
  *   <li>Random nonzero positive serial number of at most 159 bits,
  *       fitting in 20 DER value octets (RFC 5280 §4.1.2.2).</li>
  *   <li>Signature algorithm {@code SHA256withRSA} for RSA keys,
- *       {@code SHA256withECDSA} for EC keys.</li>
+ *       {@code SHA256withECDSA} for EC keys, {@code Ed25519} for Ed25519 keys.</li>
  *   <li>{@code notBefore} = now (when not explicitly set).</li>
  *   <li>SubjectKeyIdentifier and AuthorityKeyIdentifier extensions derived
  *       from the public key.</li>
@@ -83,6 +83,8 @@ public final class SelfSignedCertificateBuilder {
     private Integer pathLength;
 
     private final Set<KeyUsage> keyUsages = EnumSet.noneOf(KeyUsage.class);
+    private final Set<ExtendedKeyUsage> extendedKeyUsages = EnumSet.noneOf(ExtendedKeyUsage.class);
+    private SanBuilder sanBuilder;
 
     SelfSignedCertificateBuilder() {
         // Package-private: use PkiCertificate.selfSigned().
@@ -196,7 +198,8 @@ public final class SelfSignedCertificateBuilder {
     /**
      * Overrides the JCA signature algorithm name (e.g. {@code "SHA384withRSA"}).
      * By default the algorithm is derived from the key type: RSA keys use
-     * {@code SHA256withRSA}, EC keys use {@code SHA256withECDSA}.
+     * {@code SHA256withRSA}, EC keys use {@code SHA256withECDSA}, and Ed25519
+     * keys use {@code Ed25519}.
      * Applies only to keyPair(...); configure explicit PkiSigner algorithms on the signer.
      */
     public SelfSignedCertificateBuilder signatureAlgorithm(String algorithm) {
@@ -238,6 +241,31 @@ public final class SelfSignedCertificateBuilder {
         for (KeyUsage usage : usages) {
             keyUsages.add(Objects.requireNonNull(usage, "usage"));
         }
+        return this;
+    }
+
+    /**
+     * Adds {@code ExtendedKeyUsage} purposes to a noncritical extension.
+     * Multiple calls accumulate; duplicates are ignored.
+     */
+    public SelfSignedCertificateBuilder extendedKeyUsage(ExtendedKeyUsage... purposes) {
+        Objects.requireNonNull(purposes, "purposes");
+        for (ExtendedKeyUsage purpose : purposes) {
+            extendedKeyUsages.add(Objects.requireNonNull(purpose, "purpose"));
+        }
+        return this;
+    }
+
+    /**
+     * Configures the noncritical Subject Alternative Name extension.
+     * Multiple calls accumulate entries in insertion order, including duplicates.
+     */
+    public SelfSignedCertificateBuilder san(Consumer<SanBuilder> configurer) {
+        Objects.requireNonNull(configurer, "configurer");
+        if (sanBuilder == null) {
+            sanBuilder = new SanBuilder();
+        }
+        configurer.accept(sanBuilder);
         return this;
     }
 
@@ -307,6 +335,8 @@ public final class SelfSignedCertificateBuilder {
                     true,
                     new org.bouncycastle.asn1.x509.KeyUsage(bits));
         }
+
+        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, sanBuilder, extendedKeyUsages);
 
         JcaX509ExtensionUtils extUtils = new JcaX509ExtensionUtils();
         SubjectKeyIdentifier ski = extUtils.createSubjectKeyIdentifier(publicKey);

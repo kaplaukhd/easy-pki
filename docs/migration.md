@@ -5,6 +5,44 @@ Side-by-side recipes for replacing common BouncyCastle patterns with
 
 ## Migrating from earlier easy-pki snapshots
 
+### Ed25519, explicit PSS, identities and trust bundles
+
+`PkiKeys.ed25519()` adds a typed generation entry point. RSA/EC defaults are
+unchanged; Ed25519 is now inferred for generated keys and for JDK `EdDSA`
+keys whose named parameters identify Ed25519. Ed448 is not inferred as Ed25519.
+Existing CRL generation and test OCSP helpers use the corresponding Ed25519
+defaults, so an Ed25519 CA also works through the revocation workflow.
+Self-signed builders now accept `san(...)` and `extendedKeyUsage(...)`, with
+the same accumulation and noncritical encoding behavior as issued certificates.
+
+`PkiSigner` gains a default `signatureParameters()` method returning `null`,
+so existing implementations remain valid. For explicit RSA-PSS use
+`PkiSigner.rsaPss(key, RsaPssParameters.sha256())` or choose independent message
+and MGF1 digests plus salt length. Custom backends use `RSASSA-PSS` and supply
+a `PSSParameterSpec`; generic PSS without parameters is rejected. Provider
+support varies: BC 1.86 requires matching digests; SunRsaSign accepts the
+tested mixed-digest configurations. Unsupported combinations fail with the
+original parameters, without an implicit provider switch.
+
+`PkiIdentity` snapshots a leaf-first presentation chain and checks name/signature
+links plus key possession. Construction invokes the signer once using a fresh
+challenge, so account for backend access, latency and permissions. This does not
+check expiry, PKIX constraints or trust; partial chains may omit their root.
+Existing `Pkcs12Bundle` APIs are retained, with `PkiIdentity.fromPkcs12(...)`
+available when a checked identity is needed.
+
+`TrustBundle` snapshots explicitly selected anchors and merges them without
+duplicates. JKS/PKCS#12 loading ignores private-key entries and their chains.
+PEM input and `of(...)` explicitly trust every supplied certificate; select
+those inputs independently of peer presentation chains. The validator and path
+builder accept `trustBundle(...)`; existing anchor/keystore APIs remain.
+The Spring loader shares the model's selection and deduplication while keeping
+its named `Pkcs12Bundle` bean and PKCS#12 configuration contract. Trusted entries
+must be X.509; unsupported certificate types fail clearly instead of being lost.
+
+See [the core guide](modules/core.md) for factories, signature parameters,
+password-copy lifetime and the separate identity/trust contracts.
+
 ### Certificate signing operations
 
 Both certificate builders now sign through `PkiSigner`. Existing `keyPair(...)`,

@@ -93,7 +93,8 @@ Pkcs12Bundle trustStore;
 ```
 
 The auto-loaded `easyPkiTrustStore` contains **every X.509 trusted certificate
-entry**, ordered by alias. Private-key entries and the certificates in their
+entry**, read in alias order and deduplicated by certificate content through
+the shared `TrustBundle` model. Private-key entries and the certificates in their
 identity chains are ignored; add each intended anchor as a trusted certificate
 entry. An empty store or a store containing only key entries fails startup with
 a message that no trusted X.509 certificate entries were found.
@@ -111,6 +112,10 @@ are generated from the primary alias because the Spring snapshot does not
 retain the original aliases for those entries. To preserve aliases from a
 trust-only file when re-exporting, load it directly with `PkiPkcs12.load(...)`;
 see [PKCS#12 alias semantics](core.md#pkcs12).
+
+The general [TrustBundle loaders](core.md#explicit-trust-bundles) also support
+PEM and JKS for application-managed trust. The starter's automatic file loading
+continues to use its existing PKCS#12 properties and named bundle bean.
 
 ## Certificate expiry monitoring
 

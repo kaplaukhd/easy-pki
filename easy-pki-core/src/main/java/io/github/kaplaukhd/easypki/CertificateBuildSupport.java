@@ -23,9 +23,15 @@ import java.security.Key;
 import java.security.SecureRandom;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.EdECKey;
 import java.util.Objects;
+import java.util.Set;
 
+import org.bouncycastle.asn1.x509.Extension;
+import org.bouncycastle.asn1.x509.GeneralNames;
+import org.bouncycastle.asn1.x509.KeyPurposeId;
 import org.bouncycastle.cert.X509CertificateHolder;
+import org.bouncycastle.cert.X509v3CertificateBuilder;
 
 /**
  * Shared helpers used by the certificate builders. Package-private — not part
@@ -73,19 +79,43 @@ final class CertificateBuildSupport {
 
     /**
      * Returns the default JCA signature algorithm name for a given signing key
-     * (RSA → {@code SHA256withRSA}, EC → {@code SHA256withECDSA}).
+     * (RSA → {@code SHA256withRSA}, EC → {@code SHA256withECDSA},
+     * Ed25519 → {@code Ed25519}).
      *
      * @throws IllegalStateException if the algorithm is unsupported.
      */
     static String defaultSignatureAlgorithm(Key signingKey) {
         String keyAlg = signingKey.getAlgorithm();
+        // JDK Ed25519 and Ed448 keys both report "EdDSA". Consult the named
+        // parameters so reloaded Ed25519 keys work without treating Ed448 as Ed25519.
+        if (signingKey instanceof EdECKey edKey) {
+            keyAlg = edKey.getParams().getName();
+        }
         return switch (keyAlg) {
             case "RSA" -> "SHA256withRSA";
             case "EC", "ECDSA" -> "SHA256withECDSA";
+            case "Ed25519" -> "Ed25519";
             default -> throw new IllegalStateException(
                     "No default signature algorithm for key type '" + keyAlg
                             + "'. Set one explicitly via signatureAlgorithm(...).");
         };
+    }
+
+    /** Keeps optional SAN and EKU encodings identical across both builders. */
+    static void addSanAndExtendedKeyUsage(X509v3CertificateBuilder certBuilder,
+                                          SanBuilder sanBuilder,
+                                          Set<ExtendedKeyUsage> extendedKeyUsages)
+            throws IOException {
+        if (!extendedKeyUsages.isEmpty()) {
+            KeyPurposeId[] purposes = extendedKeyUsages.stream()
+                    .map(ExtendedKeyUsage::purposeId).toArray(KeyPurposeId[]::new);
+            certBuilder.addExtension(Extension.extendedKeyUsage, false,
+                    new org.bouncycastle.asn1.x509.ExtendedKeyUsage(purposes));
+        }
+        if (sanBuilder != null && !sanBuilder.isEmpty()) {
+            certBuilder.addExtension(Extension.subjectAlternativeName, false,
+                    new GeneralNames(sanBuilder.toGeneralNames()));
+        }
     }
 
     /** Converts a BouncyCastle {@link X509CertificateHolder} to a standard JCA certificate. */

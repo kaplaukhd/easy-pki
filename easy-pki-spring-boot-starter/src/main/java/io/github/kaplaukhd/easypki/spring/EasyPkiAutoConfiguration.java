@@ -21,15 +21,14 @@ import java.io.UncheckedIOException;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.security.UnrecoverableKeyException;
-import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
 import io.github.kaplaukhd.easypki.Pkcs12Bundle;
 import io.github.kaplaukhd.easypki.PkiPkcs12;
+import io.github.kaplaukhd.easypki.TrustBundle;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.config.BeanDefinition;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
@@ -243,23 +242,16 @@ public class EasyPkiAutoConfiguration {
         try (InputStream in = path.getInputStream()) {
             KeyStore keyStore = KeyStore.getInstance("PKCS12");
             keyStore.load(in, passwordChars);
+            TrustBundle trustBundle = TrustBundle.fromKeyStore(keyStore);
+            List<X509Certificate> anchors = trustBundle.getTrustAnchors();
             List<String> aliases = Collections.list(keyStore.aliases());
             Collections.sort(aliases);
-            List<X509Certificate> anchors = new ArrayList<>();
             String firstAlias = null;
             for (String alias : aliases) {
-                if (!keyStore.isCertificateEntry(alias)) {
-                    continue;
-                }
-                Certificate certificate = keyStore.getCertificate(alias);
-                if (!(certificate instanceof X509Certificate anchor)) {
-                    throw new IllegalArgumentException(
-                            "Trusted entry '" + alias + "' is not an X.509 certificate");
-                }
-                if (anchors.isEmpty()) {
+                if (keyStore.isCertificateEntry(alias)) {
                     firstAlias = alias;
+                    break;
                 }
-                anchors.add(anchor);
             }
             if (anchors.isEmpty()) {
                 throw new IllegalArgumentException(

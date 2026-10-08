@@ -501,15 +501,18 @@ class MyServiceTest {
 
 | Area | API |
 |---|---|
-| Key generation | `PkiKeys.rsa(int)` · `PkiKeys.ec(Curve)` (P-256 / P-384 / P-521) |
+| Key generation | `PkiKeys.rsa(int)` · `PkiKeys.ec(Curve)` (P-256 / P-384 / P-521) · `PkiKeys.ed25519()` |
 | Self-signed certs | `PkiCertificate.selfSigned()...build()` |
 | Issuer-signed certs | `PkiCertificate.signed()...build()` |
 | Signing backend | `PkiSigner` — JCA provider selection or external signing, without exporting private keys |
+| Identity | `PkiIdentity` — signing handle, leaf and ordered chain; key possession checked without export |
+| Trust | `TrustBundle` — explicit anchors from PEM/JKS/PKCS#12, immutable snapshots and merging |
 | Subject DN | JCA RFC 2253/4514 order; `String`, `X500Principal` or literal `DnBuilder` values |
 | Validity | `validFor(Duration)` · `validFrom(Instant)` · `validUntil(Instant)` |
 | Serial | random positive nonzero, at most 159 bits / 20 DER value octets · validated `serialNumber(BigInteger)` override |
-| Signature alg | auto (SHA-256 + RSA / ECDSA) · override |
+| Signature alg | automatic RSA/ECDSA SHA-256 or Ed25519; explicit RSA-PSS digest, MGF1 digest and salt via `RsaPssParameters` |
 | Extensions | `BasicConstraints` · `KeyUsage` · `ExtendedKeyUsage` · SAN · CDP · AIA · SKI · AKI |
+| Self-signed TLS metadata | SAN (DNS/IP) and EKU directly on the self-signed builder |
 | PEM / DER I/O | `PkiCertificates` · `PkiPrivateKeys` (`char[]` passwords, configurable PBKDF2 PRF/cost, AES-256-CBC) |
 | PKCS#12 | `PkiPkcs12.create()` / `.load()` — interoperable with `KeyStore` |
 | Inspection | `PkiCertInfo.of(cert)` — fingerprints, `isSelfIssued()` name check, verified `isSelfSigned()` |

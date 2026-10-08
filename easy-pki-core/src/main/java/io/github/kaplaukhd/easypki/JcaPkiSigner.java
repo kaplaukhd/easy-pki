@@ -19,7 +19,9 @@ import java.io.IOException;
 import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.Provider;
+import java.security.Signature;
 import java.security.SignatureException;
+import java.security.spec.PSSParameterSpec;
 import java.util.Objects;
 import org.bouncycastle.asn1.x509.AlgorithmIdentifier;
 import org.bouncycastle.operator.ContentSigner;
@@ -33,11 +35,17 @@ final class JcaPkiSigner implements PkiSigner {
     private final String algorithm;
     private final Provider provider;
     private final AlgorithmIdentifier identifier;
+    private final PSSParameterSpec parameters;
 
     JcaPkiSigner(PrivateKey key, String algorithm, Provider provider) {
+        this(key, algorithm, provider, null);
+    }
+
+    JcaPkiSigner(PrivateKey key, String algorithm, Provider provider, PSSParameterSpec parameters) {
         this.key = Objects.requireNonNull(key, "key");
         this.algorithm = Objects.requireNonNull(algorithm, "algorithm");
-        this.identifier = PkiSignerSupport.algorithmIdentifier(algorithm);
+        this.parameters = parameters == null ? null : RsaPssParameters.fromParameterSpec(parameters).toParameterSpec();
+        this.identifier = PkiSignerSupport.algorithmIdentifier(algorithm, this.parameters);
         this.provider = provider;
     }
 
@@ -45,8 +53,23 @@ final class JcaPkiSigner implements PkiSigner {
     public String signatureAlgorithm() { return algorithm; }
 
     @Override
+    public PSSParameterSpec signatureParameters() { return parameters; }
+
+    @Override
     public byte[] sign(byte[] content) throws GeneralSecurityException {
         Objects.requireNonNull(content, "content");
+        if (parameters != null) {
+            // The generic JCA algorithm preserves independent digest/MGF choices;
+            // digest-specific aliases can impose provider-dependent defaults.
+            Signature signature = provider == null ? Signature.getInstance(algorithm)
+                    : Signature.getInstance(algorithm, provider);
+            // Default JCA selection must see the key handle before parameters
+            // pin a provider that may not support that handle.
+            signature.initSign(key);
+            signature.setParameter(parameters);
+            signature.update(content);
+            return signature.sign();
+        }
         try {
             // Retains existing BC-to-JCA name/parameter handling. Fresh state
             // for each call avoids mixing data between repeated/concurrent builds.

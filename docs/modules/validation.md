@@ -67,6 +67,29 @@ using one evaluation instant. An online responder's current answer may be
 too new for a historical `.at(...)` value; this API does not retrieve archived
 OCSP evidence or infer an earlier GOOD status from a current REVOKED answer.
 
+## Shared trust bundles
+
+Trust can also be supplied through the shared immutable model:
+
+```java
+TrustBundle trust = TrustBundle.fromPem(Path.of("application-anchors.pem"));
+ValidationResult result = CertValidator.of(identity.getCertificate())
+    .chain(identity.getChain().subList(1, identity.getChain().size()))
+    .trustBundle(trust)
+    .validate();
+
+CertChain chain = ChainBuilder.of(leaf)
+    .intermediates(peerIntermediates)
+    .trustBundle(trust)
+    .build();
+```
+
+These methods accumulate explicit anchors like `trustAnchors(...)`.
+`ChainBuilder.trustStore(KeyStore)` uses the same trusted-certificate-entry
+selection, ignoring private-key chains. An identity's presentation chain does
+not establish trust. See [TrustBundle](core.md#explicit-trust-bundles) for
+PEM/JKS/PKCS#12 loading, snapshots and merging.
+
 ## Revocation: CRL
 
 ### Static CRL

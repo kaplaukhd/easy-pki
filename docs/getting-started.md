@@ -79,7 +79,7 @@ KeyPair intermediateKeys = PkiKeys.rsa(2048);
 KeyPair serverKeys       = PkiKeys.ec(Curve.P_256);
 ```
 
-Supported: `rsa(2048|3072|4096)` and `ec(Curve.P_256|P_384|P_521)`.
+Supported: `rsa(2048|3072|4096)`, `ec(Curve.P_256|P_384|P_521)` and `ed25519()`.
 Minimum RSA size is 2048 bits — weaker keys are rejected by construction.
 
 ### 2. Issue the root CA
@@ -99,8 +99,9 @@ Defaults applied automatically:
 - Random positive, nonzero serial number of at most 159 bits (at most
   20 DER INTEGER value octets, RFC 5280 §4.1.2.2). An explicit
   `serialNumber(...)` must be between 1 and `2^159 - 1`, inclusive.
-- Signature algorithm `SHA256withRSA` (RSA keys) or `SHA256withECDSA`
-  (EC keys).
+- Signature algorithm `SHA256withRSA` (RSA keys), `SHA256withECDSA`
+  (EC keys) or `Ed25519`. Explicit RSA-PSS is configured through
+  `PkiSigner.rsaPss(key, RsaPssParameters.sha256())`.
 - `notBefore = now` if not specified.
 - `SubjectKeyIdentifier` derived from the public key.
 - `AuthorityKeyIdentifier` set (for a self-signed cert, equal to SKI).

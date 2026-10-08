@@ -11,10 +11,19 @@ KeyPair rsa4096 = PkiKeys.rsa(4096);
 KeyPair ecP256  = PkiKeys.ec(Curve.P_256);
 KeyPair ecP384  = PkiKeys.ec(Curve.P_384);
 KeyPair ecP521  = PkiKeys.ec(Curve.P_521);
+KeyPair ed25519 = PkiKeys.ed25519();
 ```
 
 BouncyCastle is **never registered globally** — `PkiKeys` uses it as an
 explicit provider so your application's JCA configuration stays intact.
+
+Ed25519 is inferred automatically by certificate builders and `PkiSigner.jca(key)`.
+This also works after PEM/PKCS#12 reload when the JDK calls the key algorithm
+`EdDSA`: its named parameters distinguish Ed25519 from Ed448. Ed448 is not
+inferred as Ed25519. Certificate PEM/DER, plain/encrypted PKCS#8 and PKCS#12
+round trips are covered by independent JCA signature and PKIX checks.
+CRL generation and the `TestPki` OCSP responder also infer Ed25519, including
+reloaded JDK keys; GOOD and REVOKED workflows are tested.
 
 ## Self-signed certificates
 
@@ -28,6 +37,24 @@ X509Certificate root = PkiCertificate.selfSigned()
     .keyUsage(KeyUsage.KEY_CERT_SIGN, KeyUsage.CRL_SIGN)
     .build();
 ```
+
+Self-signed certificates also support `.san(...)` and `.extendedKeyUsage(...)`:
+
+```java
+X509Certificate localTls = PkiCertificate.selfSigned()
+    .subject("CN=localhost")
+    .keyPair(PkiKeys.ed25519())
+    .validFor(Duration.ofDays(30))
+    .san(s -> s.dns("localhost").ip("127.0.0.1").ip("::1"))
+    .keyUsage(KeyUsage.DIGITAL_SIGNATURE)
+    .extendedKeyUsage(ExtendedKeyUsage.TLS_SERVER)
+    .build();
+```
+
+SAN values accumulate in insertion order, including duplicates; EKU values
+accumulate with deduplication. Both are encoded as noncritical extensions,
+consistently with the issued builder. This supplies certificate metadata;
+it does not configure a TLS server or establish trust in a self-signed leaf.
 
 ## Issuer-signed certificates
 
@@ -49,7 +76,7 @@ X509Certificate leaf = PkiCertificate.signed()
 
 Both certificate builders use `PkiSigner`. The existing `.keyPair(...)` and
 `.issuer(certificate, privateKey)` paths remain convenience adapters with the
-same RSA/EC defaults and named algorithm overrides.
+same RSA/EC defaults and named algorithm overrides, with Ed25519 inference added.
 
 For an opaque JCA key handle, choose its provider explicitly:
 
@@ -108,8 +135,100 @@ cause in an `IllegalStateException`, and null/empty signatures are rejected.
 
 Tests use an opaque key whose `getEncoded()` throws, serviced by a local test
 provider. This checks the no-export path without claiming integration with a
-physical HSM. Configurable algorithm parameters, new key-generation helpers
-and CRL signer integration are outside this certificate-signing change.
+physical HSM. CRL signer integration is outside this certificate-signing API.
+
+### Explicit RSA-PSS parameters
+
+```java
+var parameters = RsaPssParameters.sha256(); // SHA-256, MGF1/SHA-256, 32-byte salt
+PkiSigner signer = PkiSigner.rsaPss(rsaPrivateKey, parameters);
+// Custom policy: new RsaPssParameters(HashAlgorithm.SHA256, HashAlgorithm.SHA384, 18).
+
+X509Certificate certificate = PkiCertificate.selfSigned()
+    .subject("CN=PSS Root")
+    .signer(rsaPublicKey, signer)
+    .isCA(true)
+    .validFor(Duration.ofDays(365))
+    .build();
+```
+
+The immutable configuration selects the message digest, MGF1 digest and salt
+length independently. Trailer field 1 is fixed. Null digests, negative salt
+lengths, unsupported parameter types and mismatched algorithm/parameter
+declarations are rejected. Whether the salt fits the key and the provider
+supports the combination is checked when signing. SHA-1 is retained as an
+explicit compatibility choice; the preset uses SHA-256.
+
+The same parameters drive JCA signing and both X.509 AlgorithmIdentifiers.
+`PkiSigner.rsaPss` also accepts a provider instance or name. SunRsaSign supports
+the custom SHA-256/MGF1-SHA-384 policy above; BC 1.86 rejects different message/MGF digests.
+Selecting such an unsupported provider fails without changing parameters or
+falling back to another provider. Normal JCA selection inspects the signing
+key before applying parameters, including opaque key handles.
+
+Custom PSS backends declare `signatureAlgorithm()` as `RSASSA-PSS` and override
+`signatureParameters()` with a standard `PSSParameterSpec`; its default is
+`null` for existing signers. Generic `RSASSA-PSS` without explicit parameters
+is rejected. Existing digest-specific named overrides remain available where
+their selected provider supports them.
+
+## Signing identities
+
+```java
+PkiIdentity identity = PkiIdentity.of(leaf, leafSigner, intermediate, root);
+PkiIdentity softwareIdentity = PkiIdentity.of(leaf, leafPrivateKey, intermediate);
+PkiIdentity loadedIdentity = PkiIdentity.fromPkcs12(pkcs12IdentityBundle);
+
+identity.getSigner();       // signing operation / key handle
+identity.getCertificate();  // leaf
+identity.getChain();        // immutable leaf-first presentation chain
+identity.getPrivateKey();   // Optional: present only for private-key / PKCS#12 factories
+```
+
+Factories copy certificate DER and the chain collection. Inputs after the
+leaf are ordered issuers; the terminal root may be omitted. A full leaf-first
+list can be passed to `PkiIdentity.of(signer, chain)`. Duplicate certificates,
+incorrect order, mismatched issuer names or broken link signatures are rejected.
+
+Construction performs **one actual signing operation** over a fresh,
+domain-separated random challenge and verifies it against the leaf public key.
+It supports opaque keys and external backends without exporting private key
+material. Verification uses the host JCA providers and honors declared PSS
+parameters. Backend failures preserve their cause. The key/backend remains
+application-owned and must keep a stable key and algorithm; the model does not
+close or destroy it. Trust-only PKCS#12 input is not a signing identity.
+
+An identity is not an acceptance decision: expiry, CA constraints, revocation,
+hostname and trust policy are handled by validation. Certificates in the identity
+chain do **not** become trust anchors. Keep identity and trust inputs separate.
+
+## Explicit trust bundles
+
+```java
+TrustBundle trusted = TrustBundle.fromPem(Path.of("trusted-roots.pem"))
+    .merge(TrustBundle.fromJks(Path.of("trusted.jks"), password),
+           TrustBundle.fromPkcs12(Path.of("trusted.p12"), password));
+List<X509Certificate> anchors = trusted.getTrustAnchors();
+// Also: TrustBundle.of(rootA, rootB), TrustBundle.fromKeyStore(keyStore).
+```
+
+The bundle is immutable: certificate DER and collections are snapshotted,
+duplicates are removed by encoded certificate equality, and first encounter
+order is preserved. Keystore aliases are read in lexicographic order. The model
+represents anchors, not alias metadata, key entries or issuer chains.
+
+JKS/PKCS#12 loaders select only trusted certificate entries, ignoring every
+private-key entry and its entire identity chain. Password `char[]` values are
+copied and the internal copies cleared after loading; no password is retained.
+`of(...)` and PEM input explicitly trust **every supplied certificate**, including
+an intentionally trusted intermediate or leaf. Supply an application-selected
+anchor set, never an untrusted peer's certificate chain. PEM loaders reject
+empty or mixed non-certificate input; an empty programmatic/keystore bundle
+establishes no trust.
+
+`CertValidator.trustBundle(...)` and `ChainBuilder.trustBundle(...)` accept this
+model. Existing `trustAnchors(...)` and `trustStore(KeyStore)` APIs remain
+available, and the Spring loader uses the shared trusted-entry selection.
 
 ## Subject DN
 
@@ -325,7 +444,7 @@ Every builder exposes escape hatches for uncommon cases:
 | Builder method | Default | Override for |
 |---|---|---|
 | `serialNumber(BigInteger)` | random positive nonzero, at most 159 bits | accepts only `1..2^159-1`; at most 20 DER INTEGER value octets |
-| `signatureAlgorithm(String)` | `SHA256with{RSA,ECDSA}` | SHA-384 / SHA-512 |
+| `signatureAlgorithm(String)` | `SHA256with{RSA,ECDSA}` or `Ed25519` | named override on private-key paths; explicit RSA-PSS via `PkiSigner.rsaPss(...)` |
 | `validFrom(Instant)` / `validUntil(Instant)` | now / `validFor` offset | historical dating |
 
 All defaults follow current best practice. Override only when you have a

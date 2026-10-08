@@ -21,13 +21,14 @@ import java.security.KeyPairGenerator;
 import java.security.Provider;
 import java.security.SecureRandom;
 import java.security.spec.ECGenParameterSpec;
+import java.security.spec.NamedParameterSpec;
 import java.security.spec.RSAKeyGenParameterSpec;
 import java.util.Objects;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
 
 /**
- * Key pair generation for RSA and elliptic-curve keys.
+ * Key pair generation for RSA, elliptic-curve and Ed25519 keys.
  *
  * <p>All operations go through the BouncyCastle provider without registering it
  * in the global JCA provider list, so using this library never mutates the
@@ -38,6 +39,7 @@ import org.bouncycastle.jce.provider.BouncyCastleProvider;
  * KeyPair rsa2048 = PkiKeys.rsa(2048);
  * KeyPair rsa4096 = PkiKeys.rsa(4096);
  * KeyPair ecP256  = PkiKeys.ec(Curve.P_256);
+ * KeyPair ed25519 = PkiKeys.ed25519();
  * }</pre>
  */
 public final class PkiKeys {
@@ -99,6 +101,23 @@ public final class PkiKeys {
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException(
                     "Failed to generate EC key pair for curve " + curve, e);
+        }
+    }
+
+    /**
+     * Generates a fresh Ed25519 key pair using a private Bouncy Castle provider
+     * instance. Certificate builders infer the {@code Ed25519} signature
+     * algorithm from these keys without an explicit algorithm override.
+     *
+     * @return a newly generated Ed25519 key pair.
+     */
+    public static KeyPair ed25519() {
+        try {
+            KeyPairGenerator generator = KeyPairGenerator.getInstance("Ed25519", BC);
+            generator.initialize(NamedParameterSpec.ED25519, new SecureRandom());
+            return generator.generateKeyPair();
+        } catch (GeneralSecurityException e) {
+            throw new IllegalStateException("Failed to generate Ed25519 key pair", e);
         }
     }
 }

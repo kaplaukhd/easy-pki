@@ -17,7 +17,6 @@ package io.github.kaplaukhd.easypki.validation;
 
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
-import java.security.KeyStoreException;
 import java.security.cert.CertPathBuilder;
 import java.security.cert.CertStore;
 import java.security.cert.Certificate;
@@ -30,11 +29,12 @@ import java.security.cert.X509CertSelector;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Enumeration;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+
+import io.github.kaplaukhd.easypki.TrustBundle;
 
 /**
  * Builds an ordered certificate chain from an end-entity certificate by
@@ -68,7 +68,7 @@ public final class ChainBuilder {
 
     private final X509Certificate certificate;
     private final Set<X509Certificate> intermediates = new LinkedHashSet<>();
-    private final Set<X509Certificate> trustAnchors = new LinkedHashSet<>();
+    private TrustBundle trustBundle = TrustBundle.of();
 
     private ChainBuilder(X509Certificate certificate) {
         this.certificate = certificate;
@@ -102,8 +102,7 @@ public final class ChainBuilder {
     /** Collection overload of {@link #trustAnchors(X509Certificate...)}. */
     public ChainBuilder trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        trustAnchors.addAll(List.copyOf(anchors));
-        return this;
+        return trustBundle(TrustBundle.of(anchors));
     }
 
     /**
@@ -111,22 +110,12 @@ public final class ChainBuilder {
      * are added as anchors; key entries are ignored.
      */
     public ChainBuilder trustStore(KeyStore keyStore) {
-        Objects.requireNonNull(keyStore, "keyStore");
-        try {
-            Enumeration<String> aliases = keyStore.aliases();
-            while (aliases.hasMoreElements()) {
-                String alias = aliases.nextElement();
-                if (!keyStore.isCertificateEntry(alias)) {
-                    continue;
-                }
-                Certificate cert = keyStore.getCertificate(alias);
-                if (cert instanceof X509Certificate x) {
-                    trustAnchors.add(x);
-                }
-            }
-        } catch (KeyStoreException e) {
-            throw new IllegalStateException("Failed to read trust store", e);
-        }
+        return trustBundle(TrustBundle.fromKeyStore(keyStore));
+    }
+
+    /** Adds all explicit anchors in the bundle. Multiple calls accumulate; null is rejected. */
+    public ChainBuilder trustBundle(TrustBundle bundle) {
+        trustBundle = trustBundle.merge(Objects.requireNonNull(bundle, "bundle"));
         return this;
     }
 
@@ -142,6 +131,7 @@ public final class ChainBuilder {
      *         are retained as the cause.
      */
     public CertChain build() {
+        List<X509Certificate> trustAnchors = trustBundle.getTrustAnchors();
         if (trustAnchors.isEmpty()) {
             throw new IllegalStateException(
                     "At least one trust anchor (or a trust store) is required");

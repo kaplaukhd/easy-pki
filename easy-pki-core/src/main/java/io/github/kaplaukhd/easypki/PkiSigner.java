@@ -19,19 +19,23 @@ import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.Security;
+import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.PSSParameterSpec;
 import java.util.Objects;
 
 /**
- * Signs certificate data without exposing or exporting a private key.
+ * Signs complete messages without exposing or exporting a private key.
  * Implementations can use a JCA key handle, an HSM or an external service.
  *
- * <p>The algorithm name must have a known X.509 AlgorithmIdentifier in the
- * bundled Bouncy Castle implementation. The signer must use that algorithm's
+ * <p>The algorithm and parameters must have a supported X.509 AlgorithmIdentifier.
+ * The signer must use that algorithm's
  * parameters and signature encoding: for example, ECDSA returns DER-encoded
- * (r, s), not a raw concatenation. Configurable algorithm parameters are not
- * part of this contract yet.
+ * (r, s), not a raw concatenation. Explicit RSA-PSS uses the JCA name
+ * {@code RSASSA-PSS} and declares its parameters through
+ * {@link #signatureParameters()}.
  *
- * <p>Builders provide the complete DER-encoded TBSCertificate, not a digest.
+ * <p>Builders provide the complete DER-encoded TBSCertificate, not a digest;
+ * identity validation may supply a fresh challenge to prove key possession.
  * Implementations own hashing and signing, must use the intended signing key,
  * and must keep their algorithm stable. A signer may be reused across builds;
  * its implementation defines concurrency and backend-resource lifetime.
@@ -40,6 +44,17 @@ import java.util.Objects;
 public interface PkiSigner {
     /** Returns a stable signature algorithm name, for example {@code SHA256withRSA}. */
     String signatureAlgorithm();
+
+    /**
+     * Returns stable explicit JCA signature parameters, or {@code null} when the
+     * algorithm name completely determines them. The supported explicit form is
+     * {@link PSSParameterSpec}, with the digests supported by {@link HashAlgorithm},
+     * MGF1 and trailer field 1. Generic {@code RSASSA-PSS} requires parameters;
+     * unsupported parameter types are rejected before signing.
+     *
+     * @return the declared parameters, or {@code null} for name-defined parameters
+     */
+    default AlgorithmParameterSpec signatureParameters() { return null; }
 
     /**
      * Signs the supplied complete message and returns its raw X.509 signature
@@ -51,7 +66,7 @@ public interface PkiSigner {
      */
     byte[] sign(byte[] content) throws GeneralSecurityException;
 
-    /** Uses the existing RSA/EC SHA-256 defaults and normal JCA provider selection. */
+    /** Uses RSA/EC SHA-256 defaults or Ed25519, with normal JCA provider selection. */
     static PkiSigner jca(PrivateKey key) {
         Objects.requireNonNull(key, "key");
         return jca(key, CertificateBuildSupport.defaultSignatureAlgorithm(key));
@@ -83,5 +98,36 @@ public interface PkiSigner {
             throw new IllegalArgumentException("No registered JCA provider named '" + providerName + "'");
         }
         return jca(key, algorithm, provider);
+    }
+
+    /** Uses explicit RSA-PSS parameters and normal JCA provider selection. */
+    static PkiSigner rsaPss(PrivateKey key, RsaPssParameters parameters) {
+        return new JcaPkiSigner(key, "RSASSA-PSS", null,
+                Objects.requireNonNull(parameters, "parameters").toParameterSpec());
+    }
+
+    /**
+     * Uses explicit RSA-PSS parameters and only the supplied provider instance.
+     * The provider need not be globally registered; unsupported parameters or key
+     * handles fail without falling back to another provider.
+     */
+    static PkiSigner rsaPss(PrivateKey key, RsaPssParameters parameters, Provider provider) {
+        return new JcaPkiSigner(key, "RSASSA-PSS", Objects.requireNonNull(provider, "provider"),
+                Objects.requireNonNull(parameters, "parameters").toParameterSpec());
+    }
+
+    /**
+     * Uses explicit RSA-PSS parameters and resolves a registered provider once.
+     * Never registers a provider or falls back to normal provider selection.
+     *
+     * @throws IllegalArgumentException if no such provider is registered
+     */
+    static PkiSigner rsaPss(PrivateKey key, RsaPssParameters parameters, String providerName) {
+        Objects.requireNonNull(providerName, "providerName");
+        Provider provider = Security.getProvider(providerName);
+        if (provider == null) {
+            throw new IllegalArgumentException("No registered JCA provider named '" + providerName + "'");
+        }
+        return rsaPss(key, parameters, provider);
     }
 }

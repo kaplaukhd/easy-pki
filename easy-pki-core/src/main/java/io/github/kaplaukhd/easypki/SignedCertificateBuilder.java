@@ -75,7 +75,7 @@ import org.bouncycastle.operator.ContentSigner;
  * <ul>
  *   <li>Random nonzero positive serial number of at most 159 bits,
  *       fitting in 20 DER value octets (RFC 5280 §4.1.2.2).</li>
- *   <li>Signature algorithm {@code SHA256withRSA} / {@code SHA256withECDSA}
+ *   <li>Signature algorithm {@code SHA256withRSA} / {@code SHA256withECDSA} / {@code Ed25519}
  *       derived from the <em>issuer's</em> private key.</li>
  *   <li>{@code notBefore} = now (when not explicitly set).</li>
  *   <li>SubjectKeyIdentifier derived from the subject public key;
@@ -264,7 +264,7 @@ public final class SignedCertificateBuilder {
         return this;
     }
 
-    /** Adds {@code ExtendedKeyUsage} purposes. Multiple calls accumulate. */
+    /** Adds noncritical {@code ExtendedKeyUsage} purposes. Multiple calls accumulate; duplicates are ignored. */
     public SignedCertificateBuilder extendedKeyUsage(ExtendedKeyUsage... purposes) {
         Objects.requireNonNull(purposes, "purposes");
         for (ExtendedKeyUsage purpose : purposes) {
@@ -274,8 +274,8 @@ public final class SignedCertificateBuilder {
     }
 
     /**
-     * Configures the Subject Alternative Name extension. Multiple calls
-     * accumulate entries.
+     * Configures the noncritical Subject Alternative Name extension. Multiple calls
+     * accumulate entries in insertion order, including duplicates.
      */
     public SignedCertificateBuilder san(Consumer<SanBuilder> configurer) {
         Objects.requireNonNull(configurer, "configurer");
@@ -377,25 +377,7 @@ public final class SignedCertificateBuilder {
                     new org.bouncycastle.asn1.x509.KeyUsage(bits));
         }
 
-        if (!extendedKeyUsages.isEmpty()) {
-            org.bouncycastle.asn1.x509.KeyPurposeId[] purposes =
-                    new org.bouncycastle.asn1.x509.KeyPurposeId[extendedKeyUsages.size()];
-            int i = 0;
-            for (ExtendedKeyUsage eku : extendedKeyUsages) {
-                purposes[i++] = eku.purposeId();
-            }
-            certBuilder.addExtension(
-                    Extension.extendedKeyUsage,
-                    false,
-                    new org.bouncycastle.asn1.x509.ExtendedKeyUsage(purposes));
-        }
-
-        if (sanBuilder != null && !sanBuilder.isEmpty()) {
-            certBuilder.addExtension(
-                    Extension.subjectAlternativeName,
-                    false,
-                    new GeneralNames(sanBuilder.toGeneralNames()));
-        }
+        CertificateBuildSupport.addSanAndExtendedKeyUsage(certBuilder, sanBuilder, extendedKeyUsages);
 
         if (!crlDistributionPoints.isEmpty()) {
             DistributionPoint[] dps = new DistributionPoint[crlDistributionPoints.size()];

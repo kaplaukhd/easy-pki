@@ -15,6 +15,8 @@
  */
 package io.github.kaplaukhd.easypki.test;
 
+import io.github.kaplaukhd.easypki.PkiSigner;
+
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.util.Date;
@@ -122,9 +124,7 @@ public final class TestOcspResponder implements AutoCloseable {
                     builder.setResponseExtensions(new Extensions(respNonce));
                 }
 
-                String sigAlg = pki.getIssuerPrivateKey().getAlgorithm().equals("EC")
-                        ? "SHA256withECDSA"
-                        : "SHA256withRSA";
+                String sigAlg = PkiSigner.jca(pki.getIssuerPrivateKey()).signatureAlgorithm();
                 BasicOCSPResp basic = builder.build(
                         new JcaContentSignerBuilder(sigAlg).build(pki.getIssuerPrivateKey()),
                         new X509CertificateHolder[]{issuerHolder},

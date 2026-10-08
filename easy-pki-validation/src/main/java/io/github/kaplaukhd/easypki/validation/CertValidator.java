@@ -42,6 +42,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import io.github.kaplaukhd.easypki.PkiCertInfo;
+import io.github.kaplaukhd.easypki.TrustBundle;
 
 /**
  * Fluent certificate validator.
@@ -82,7 +83,7 @@ public final class CertValidator {
 
     private final X509Certificate certificate;
     private final List<X509Certificate> chain = new ArrayList<>();
-    private final Set<X509Certificate> trustAnchors = new HashSet<>();
+    private TrustBundle trustBundle = TrustBundle.of();
     private CrlConfig crlConfig;
     private HttpCrlFetcher httpCrlFetcher;
     private OcspConfig ocspConfig;
@@ -137,7 +138,12 @@ public final class CertValidator {
     /** Overload that accepts a collection. */
     public CertValidator trustAnchors(Collection<X509Certificate> anchors) {
         Objects.requireNonNull(anchors, "anchors");
-        this.trustAnchors.addAll(List.copyOf(anchors));
+        return trustBundle(TrustBundle.of(anchors));
+    }
+
+    /** Adds all explicit anchors in the bundle. Multiple calls accumulate; null is rejected. */
+    public CertValidator trustBundle(TrustBundle bundle) {
+        trustBundle = trustBundle.merge(Objects.requireNonNull(bundle, "bundle"));
         return this;
     }
 
@@ -274,7 +280,7 @@ public final class CertValidator {
         }
 
         boolean trusted = determineTrust(path, errors);
-        X509Certificate selectedAnchor = trustAnchors.contains(path.get(path.size() - 1))
+        X509Certificate selectedAnchor = trustBundle.getTrustAnchors().contains(path.get(path.size() - 1))
                 ? path.get(path.size() - 1) : null;
         if (trusted && !certificatesToValidate.isEmpty()) {
             selectedAnchor = validatePkix(path, certificatesToValidate, now, errors);
@@ -297,7 +303,7 @@ public final class CertValidator {
     }
 
     private List<X509Certificate> certificatesToValidate(List<X509Certificate> path) {
-        if (trustAnchors.contains(path.get(path.size() - 1))) {
+        if (trustBundle.getTrustAnchors().contains(path.get(path.size() - 1))) {
             return path.subList(0, path.size() - 1);
         }
         return path;
@@ -309,8 +315,8 @@ public final class CertValidator {
         X509Certificate last = suppliedPath.get(suppliedPath.size() - 1);
         // If the caller included an anchor, bind validation to that exact one.
         // Otherwise PKIX may select an issuer from the configured anchor set.
-        Collection<X509Certificate> anchors = trustAnchors.contains(last)
-                ? List.of(last) : trustAnchors;
+        Collection<X509Certificate> anchors = trustBundle.getTrustAnchors().contains(last)
+                ? List.of(last) : trustBundle.getTrustAnchors();
         Set<TrustAnchor> pkixAnchors = new HashSet<>();
         for (X509Certificate anchor : anchors) {
             pkixAnchors.add(new TrustAnchor(anchor, null));
@@ -641,11 +647,11 @@ public final class CertValidator {
 
     private boolean determineTrust(List<X509Certificate> path, List<ValidationError> errors) {
         X509Certificate last = path.get(path.size() - 1);
-        if (trustAnchors.contains(last)) {
+        if (trustBundle.getTrustAnchors().contains(last)) {
             return true;
         }
 
-        for (X509Certificate anchor : trustAnchors) {
+        for (X509Certificate anchor : trustBundle.getTrustAnchors()) {
             if (anchor.getSubjectX500Principal().equals(last.getIssuerX500Principal())) {
                 try {
                     last.verify(anchor.getPublicKey());
@@ -658,7 +664,7 @@ public final class CertValidator {
 
         errors.add(new ValidationError(
                 ValidationError.Code.UNTRUSTED_ROOT,
-                trustAnchors.isEmpty()
+                trustBundle.getTrustAnchors().isEmpty()
                         ? "No trust anchors configured; supply trusted certificates via trustAnchors(...)"
                         : "Chain does not terminate in a configured trust anchor (last cert: '"
                                 + subject(last) + "')"));

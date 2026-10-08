@@ -24,6 +24,7 @@ import java.security.SecureRandom;
 import java.security.cert.CRLException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509CRL;
+import java.security.interfaces.EdECKey;
 
 import org.bouncycastle.cert.X509CRLHolder;
 
@@ -46,9 +47,15 @@ final class CrlBuildSupport {
 
     static String defaultSignatureAlgorithm(Key signingKey) {
         String keyAlg = signingKey.getAlgorithm();
+        // JDK Ed25519 and Ed448 keys both report "EdDSA". Resolve their
+        // named parameters, just as the certificate builders do.
+        if (signingKey instanceof EdECKey edKey) {
+            keyAlg = edKey.getParams().getName();
+        }
         return switch (keyAlg) {
             case "RSA" -> "SHA256withRSA";
             case "EC", "ECDSA" -> "SHA256withECDSA";
+            case "Ed25519" -> "Ed25519";
             default -> throw new IllegalStateException(
                     "No default signature algorithm for key type '" + keyAlg
                             + "'. Set one explicitly via signatureAlgorithm(...).");

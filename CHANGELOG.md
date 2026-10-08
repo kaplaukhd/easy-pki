@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Ed25519:** add `PkiKeys.ed25519()` and certificate/signer default
+  inference, including reloaded JDK `EdDSA` keys identified by named parameters.
+  Ed448 remains distinct. PEM/DER, encrypted keys, PKCS#12 and PKIX are tested.
+  CRL generation and test OCSP responses also infer Ed25519 after key reload.
+- **Explicit RSA-PSS:** add immutable `RsaPssParameters` and JCA signer
+  factories with digest, MGF1 digest and salt length. The default
+  `PkiSigner.signatureParameters()` preserves existing implementations.
+  Exact parameters are encoded in both certificate identifiers and used for
+  signing. Default provider selection examines the key before configuring PSS;
+  explicit providers never silently fall back. Unsupported combinations fail.
+- **Checked signing identities:** add immutable `PkiIdentity` with
+  certificate snapshots, ordered-chain link checks and fresh challenge-based
+  proof of the leaf key, including opaque handles. Root omission is allowed;
+  identity construction does not grant trust or replace PKIX validation.
+- **Shared trust model:** add immutable `TrustBundle` with PEM/JKS/PKCS#12
+  loaders, DER snapshots, deterministic deduplication and merging. Keystore
+  private-key chains are ignored. Validator, path builder and Spring trust
+  loading use the shared model while retaining existing entry points.
+- **Self-signed SAN/EKU:** add SAN and extended key usages to the
+  self-signed builder using the same extension encoder as issued certificates.
+  Existing accumulation, deduplication and criticality semantics are preserved.
 - **Certificate signing contract:** add `PkiSigner` with JCA adapters
   using default provider selection, a registered provider name, or an explicit
   provider instance. Both certificate builders use the contract; existing

@@ -47,7 +47,8 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
  *   <li>{@code thisUpdate} = now</li>
  *   <li>{@code crlNumber} = 128-bit random positive integer</li>
  *   <li>Signature algorithm derived from the issuer private key
- *       (RSA → {@code SHA256withRSA}, EC → {@code SHA256withECDSA})</li>
+ *       (RSA → {@code SHA256withRSA}, EC → {@code SHA256withECDSA},
+ *       Ed25519 → {@code Ed25519})</li>
  * </ul>
  */
 public final class CrlBuilder {

@@ -16,7 +16,8 @@
 package io.github.kaplaukhd.easypki;
 
 /**
- * Hash algorithms supported by {@link PkiCertInfo#getFingerprint(HashAlgorithm)}.
+ * Digest identifiers used by {@link PkiCertInfo#getFingerprint(HashAlgorithm)}
+ * and explicit {@link RsaPssParameters}.
  */
 public enum HashAlgorithm {
 

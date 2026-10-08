@@ -83,6 +83,45 @@ class EasyPkiTrustStoreTest {
     }
 
     @Test
+    void duplicateTrustedEntriesAreDeduplicatedWithoutLosingIndependentRoots() throws Exception {
+        KeyStore store = emptyStore();
+        store.setCertificateEntry("a-root-a", ROOT_A);
+        store.setCertificateEntry("b-root-a-copy", ROOT_A);
+        store.setCertificateEntry("z-root-b", ROOT_B);
+        withStore(save(store)).run(context -> {
+            assertThat(context).hasNotFailed();
+            Pkcs12Bundle bundle = context.getBean(
+                    EasyPkiAutoConfiguration.TRUST_STORE_BEAN, Pkcs12Bundle.class);
+            assertThat(bundle.getAlias()).isEqualTo("a-root-a");
+            assertThat(bundle.getChain()).containsExactly(ROOT_A, ROOT_B);
+            EasyPkiValidator validator = context.getBean(EasyPkiValidator.class);
+            assertThat(validator.validate(LEAF_A).isValid()).isTrue();
+            assertThat(validator.validate(LEAF_B).isValid()).isTrue();
+        });
+    }
+
+    @Test
+    void privateKeyIdentityIntermediatesRemainUntrusted() throws Exception {
+        KeyPair intermediateKeys = PkiKeys.rsa(2048);
+        X509Certificate intermediate = PkiCertificate.signed()
+                .subject("CN=Starter Identity Intermediate").publicKey(intermediateKeys.getPublic())
+                .issuer(ROOT_A, KEYS_A.getPrivate()).pathLength(0)
+                .validFor(Duration.ofDays(100)).build();
+        X509Certificate leaf = leaf("Intermediate", intermediate, intermediateKeys);
+        KeyStore store = emptyStore();
+        store.setKeyEntry("identity-intermediate", intermediateKeys.getPrivate(), PASSWORD,
+                new X509Certificate[]{intermediate, ROOT_A});
+        store.setCertificateEntry("trusted-b", ROOT_B);
+        withStore(save(store)).run(context -> {
+            assertThat(context).hasNotFailed();
+            EasyPkiValidator validator = context.getBean(EasyPkiValidator.class);
+            assertThat(validator.getTrustAnchors()).containsExactly(ROOT_B);
+            assertThat(validator.validate(leaf, intermediate, ROOT_A).isValid()).isFalse();
+            assertThat(validator.validate(LEAF_B).isValid()).isTrue();
+        });
+    }
+
+    @Test
     void privateKeyEntriesNeverBecomeImplicitTrustAnchors() throws Exception {
         KeyStore store = emptyStore();
         store.setKeyEntry("identity-a", KEYS_A.getPrivate(), PASSWORD,
